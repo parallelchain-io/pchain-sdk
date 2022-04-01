@@ -1,0 +1,13 @@
+[package]
+name = "smart_contract"
+version = "0.1.0"
+authors = ["ParallelChain Lab <info@parallelchain.io>"]
+edition = "2021"
+
+[lib]
+doctest = false
+
+[dependencies]
+borsh = "0.9"
+protocol_types = { git = "https://github.com/parallelchain-io/parallelchain-protocol-types" }
+smart_contract_macros = { path = "smart_contract_macros" }
