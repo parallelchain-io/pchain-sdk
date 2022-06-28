@@ -21,7 +21,7 @@ mod imports;
 pub(crate) mod transaction;
 pub use transaction::Transaction;
 
-pub use smart_contract_macros::{
+pub use pchain_sdk_macros::{
     contract_init,
     sdk_method_bindgen,
 };
