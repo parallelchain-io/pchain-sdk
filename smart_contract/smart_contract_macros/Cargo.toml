@@ -1,5 +1,5 @@
 [package]
-name = "smart_contract_macros"
+name = "pchain-sdk-macros"
 version = "0.1.0"
 authors = ["ParallelChain Lab <info@parallelchain.io>"]
 edition = "2021"
