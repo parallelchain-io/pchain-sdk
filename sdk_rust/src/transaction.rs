@@ -1,25 +1,9 @@
-/*
- Copyright (c) 2022 ParallelChain Lab
-
- This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation, either version 3 of the License, or
- (at your option) any later version.
-
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with this program.  If not, see <https://www.gnu.org/licenses/>.
- */
-
+use crate::Callback;
+use crate::context::ContractCallData;
 use crate::imports::*;
-use protocol_types::sc_params::Deserializable as DeserializableSCParams;
-use protocol_types::transaction::Deserializable as DeserializableTransaction;
-use borsh::de::BorshDeserialize;
-use protocol_types::transaction::Serializable;
+use borsh::BorshDeserialize;
+use protocol_types::{Serializable, Deserializable};
+
 
 /// smart_contract::Transaction is a handle containing the parameters of the smart contract invocation
 /// (e.g., the 'args' string provided by the contract_caller, the previous block hash, etc.)
@@ -32,9 +16,7 @@ use protocol_types::transaction::Serializable;
 /// 
 /// # Basic example 
 /// ```no_run
-/// // where A: primitive type or custom data type that implements the BorshSerializable
-/// // trait.
-/// let tx: smart_contract::Transaction<A> = Transaction::<A>::new();
+/// let tx: smart_contract::Transaction = Transaction::new();
 /// 
 /// assert!(tx.get("hello").is_none());
 /// 
@@ -44,27 +26,35 @@ use protocol_types::transaction::Serializable;
 /// tx.Set("hello", "");
 /// assert_eq!(tx.get("hello")?, "");
 /// ```
-
-pub struct Transaction<A> {
+pub struct Transaction {
+    /// Block Hash of this block
     pub this_block_number: u64,
+    /// Block Hash of the previous block.
     pub prev_block_hash: protocol_types::crypto::Sha256Hash,
+    /// Unix timestamp
     pub timestamp: u32,
+    /// Reserved data
     pub random_bytes: protocol_types::crypto::Sha256Hash,
+    /// Address of a recipient.
     pub to_address: protocol_types::crypto::PublicAddress,
+    /// Address of a sender.
     pub from_address: protocol_types::crypto::PublicAddress,
+    /// Amount of tokens to be sent to the smart contract address.
     pub value: u64,
+    /// Hash of a transaction's signature. The transaction hashes of other transactions
+    /// included in a block are used to obtain the Merkle root hash of a block.
     pub transaction_hash: protocol_types::crypto::Sha256Hash,
-    pub arguments: A,
+    /// Transaction data as arguments to this contract call
+    pub arguments: Vec<u8>,
 }
 
-impl<A: BorshDeserialize> Transaction<A> {
+impl Transaction {
     /// Default constructor.
     /// 
     /// `new` should never fail if the ParallelChain Mainnet Fullnode
     /// is configured properly.
     /// 
-    /// `new` expects arguments (A) in the form of either primitive types
-    /// or custom data types to be fed into the smart contract.
+    /// `new` expects arguments in the form of Vec<u8>.
     pub fn new() -> Self {
 
         let params_from_transaction = Self::parse_params_from_transaction();
@@ -79,7 +69,7 @@ impl<A: BorshDeserialize> Transaction<A> {
             from_address: params_from_transaction.from_address,
             value: params_from_transaction.value,
             transaction_hash: params_from_transaction.transaction_hash,
-            arguments: BorshDeserialize::deserialize(&mut params_from_transaction.data.as_ref()).unwrap(),
+            arguments: params_from_transaction.data,
         }
     }
 
@@ -87,7 +77,7 @@ impl<A: BorshDeserialize> Transaction<A> {
     ///
     /// If get fails, the smart contract terminates and the sets this invocation made
     /// are not committed.
-    pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
+    pub fn get(key: &[u8]) -> Option<Vec<u8>> {
 
         let key_ptr = key.as_ptr();
 
@@ -111,8 +101,7 @@ impl<A: BorshDeserialize> Transaction<A> {
         unsafe {
             let val_len = raw_get(key_ptr, key.len() as u32, val_ptr_ptr);
 
-            // If module execution reaches this point, we can assume that
-            // the `get` has succeeded.
+            // If module execution reaches this point, we can assume that the `get` has succeeded.
             //
             // This Vec<u8> takes ownership of the segment of memory, letting the Rust ownership
             // system to Drop it later.
@@ -130,7 +119,7 @@ impl<A: BorshDeserialize> Transaction<A> {
     } 
 
     /// set binds key to value in the world state.
-    pub fn set(&self, key: &[u8], value: &[u8]) {
+    pub fn set(key: &[u8], value: &[u8]) {
         let key_ptr = key.as_ptr();
         let val_ptr = value.as_ptr();
         unsafe {       
@@ -138,13 +127,10 @@ impl<A: BorshDeserialize> Transaction<A> {
         } 
     }
 
-    /// `return_value` returns any values in the smart contract
-    /// back to fullnode::executor in the form of receipts.
-    /// 
-    /// This method is not required to be used when the
-    /// `contract_init` macro is being used on the
-    /// contract() entrypoint function.
-    pub fn return_value(&self, value: Vec<u8>) {    
+    /// `return_value` places `value` in the receipt of an `ExternalToContract` transaction.
+    /// This method is not required when `contract_init` macro is being used on the actions()
+    /// entrypoint function.
+    pub fn return_value(value: Vec<u8>) {    
         let value_ptr = value.as_ptr();
         let value_len = value.len() as u32;
         unsafe {           
@@ -152,7 +138,20 @@ impl<A: BorshDeserialize> Transaction<A> {
         }
     }
 
-    pub fn emit_event(&self, topic: &[u8], value: &[u8]) {
+    /// get input arguments for entrypoint
+    pub fn get_arguments() -> Vec<u8> {
+        let mut args_ptr: u32 = 0;
+        let args_ptr_ptr = &mut args_ptr;
+
+        let arguments;
+        unsafe {
+            let args_len = raw_get_arguments(args_ptr_ptr);
+            arguments = Vec::<u8>::from_raw_parts(args_ptr as *mut u8,args_len as usize, args_len as usize);
+        }
+        arguments
+    }
+
+    pub fn emit_event(topic: &[u8], value: &[u8]) {
         let event = protocol_types::transaction::Event{ 
             topic: topic.to_vec(), 
             value: value.to_vec()
@@ -206,4 +205,109 @@ impl<A: BorshDeserialize> Transaction<A> {
         protocol_types::sc_params::ParamsFromBlockchain::deserialize(&bytes).unwrap()
     }
 
+    /// calling function which handled by blockchain executor
+    /// It returns Option of Vec of bytes. Interpretation on the bytes depends on caller
+    pub fn call_contract(contract_address : protocol_types::PublicAddress, method_name:&str, arguments :Vec<u8>, value :u64, gas :u64) -> Option<Vec<u8>> {
+        let contract_address_ptr : *const u8 = contract_address.as_ptr();
+
+        let value_ptr :*const u64 = &value;
+        let gas_ptr :*const u64 = &gas;
+
+        let mut val_ptr: u32 = 0;
+        let val_ptr_ptr = &mut val_ptr;
+
+        let is_multiple_methods_contract = method_name.len() > 0;
+
+        let call_data = ContractCallData::to_raw_call_data(method_name, arguments.clone());
+        let call_data_ptr :*const u8 = call_data.as_ptr();
+        let call_data_len = call_data.len();
+
+        let value;
+        unsafe {
+            let val_len = raw_call(contract_address_ptr, call_data_ptr, call_data_len as u32, value_ptr as *const u8, gas_ptr as *const u8, val_ptr_ptr);
+
+            // This Vec<u8> takes ownership of the segment of memory, letting the Rust ownership
+            // system to Drop it later.
+            value = Vec::<u8>::from_raw_parts(val_ptr as *mut u8, val_len as usize, val_len as usize);
+        }
+
+        match value {
+            vec if vec.is_empty() => {
+                None
+            },
+            return_value => {
+                // Raw call function should return the values set by tx.return_value
+                // If mutiple methods is called, the return value type should be Callback
+                if is_multiple_methods_contract {
+                    Callback::from_callback(return_value)
+                } else { // Otherwise, raw bytes should be returned (e.g. for those contracts using contract_init)
+                    Some(return_value)
+                }
+            }
+        }
+    }
+
+    /// view contract by accessing view entrypoint of the contract
+    pub fn view_contract(contract_address : protocol_types::PublicAddress, method_name:&str, arguments :Vec<u8>) -> Option<Vec<u8>> {
+        let contract_address_ptr : *const u8 = contract_address.as_ptr();
+        let mut val_ptr: u32 = 0;
+        let val_ptr_ptr = &mut val_ptr;
+
+        let is_multiple_methods_contract = method_name.len() > 0;
+
+        let call_data = ContractCallData::to_raw_call_data(method_name, arguments.clone());
+        let call_data_ptr :*const u8 = call_data.as_ptr();
+        let call_data_len = call_data.len();
+
+        let value;
+        unsafe {
+            let val_len = raw_view(contract_address_ptr, call_data_ptr, call_data_len as u32, val_ptr_ptr);
+
+            // This Vec<u8> takes ownership of the segment of memory, letting the Rust ownership
+            // system to Drop it later.
+            value = Vec::<u8>::from_raw_parts(val_ptr as *mut u8, val_len as usize, val_len as usize);
+        }
+
+        match value {
+            vec if vec.is_empty() => {
+                None
+            },
+            return_value => {
+                // Raw function should return the values set by tx.return_value
+                // If mutiple methods is called, the return value type should be Callback
+                if is_multiple_methods_contract {
+                    Callback::from_callback(return_value)
+                } else { // Otherwise, raw bytes should be returned (e.g. for those contracts using contract_init)
+                    Some(return_value)
+                }
+            }
+        }
+    }
+
+    /// A call to contract. The caller should already know the data type of return value from the function call
+    /// It returns Option of T where T is return value from the function. 
+    /// If data type T is different from the actual return value type of the function, None is returned.
+    pub fn call<T: BorshDeserialize>(address : protocol_types::PublicAddress, method_name:&str, arguments :Vec<u8>, value :u64, gas :u64) -> Option<T> {
+        if let Some(ret)= Self::call_contract(address, method_name, arguments, value, gas) {
+            let mut ret = ret.as_slice();
+            match BorshDeserialize::deserialize(&mut ret) {
+                Ok(e) => {
+                    return Some(e);
+                }
+                _=>{ return None;}
+            }
+        }
+        None
+    }
+
+    /// pay() calls the raw_pay() that 
+    /// runs a ctoe call to transfer credit to another address. 
+    /// Return the remaining balance of the receiver's account
+    pub fn pay(address : protocol_types::PublicAddress, value : u64) -> u64 {
+        let contract_address_ptr : *const u8 = address.as_ptr();
+        let value_ptr :*const u64 = &value;
+        unsafe {
+            raw_pay(contract_address_ptr, value_ptr as *const u8)
+        }
+    }
 }

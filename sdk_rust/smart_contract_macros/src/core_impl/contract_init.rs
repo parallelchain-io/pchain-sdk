@@ -1,25 +1,8 @@
-/*
- Copyright (c) 2022 ParallelChain Lab
-
- This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation, either version 3 of the License, or
- (at your option) any later version.
-
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with this program.  If not, see <https://www.gnu.org/licenses/>.
- */
-
 use syn::{
     Abi, Attribute,
     Block, Expr, ExprBlock,
     FnArg, Ident, 
-    ItemFn,Local, Pat,
+    ItemFn,Local,
     ReturnType, Stmt, Type,
     token, parse_quote, PathArguments,  
 };
@@ -27,6 +10,7 @@ use syn::fold::{self, Fold};
 use proc_macro::TokenStream;
 use quote::quote;
 use super::generate_compilation_error;
+
 
 //////////////////////////////////////////////////////////////////////////////
 // TransformationRetrurnExpr traverses every node to identify the return value 
@@ -38,10 +22,6 @@ struct TransformReturnExpr {
     //
     // 2. Therefore the method signature of this trait takes in the
     //    node as its only argument.
-    //
-    // 3. `TransformReturnExpr` contains a field called `sdk_variable_name` which 
-    //    allows a return expression to call the SDK's return_value() method.
-    sdk_variable_name: Ident,
 }
 
 impl Fold for TransformReturnExpr {
@@ -58,9 +38,6 @@ impl Fold for TransformReturnExpr {
             // name called `ret_val` for serialization.
             let ret_val = *e.expr.unwrap();
             
-            // the SDK variable name to call the `return_value()` method.
-            let sdk_variable_name = &self.sdk_variable_name;
-            
             // Transforms the parsed nodes above into another node that:
             // 1. Serializes ret_val and writes to a buffer as a Vec<u8>.
             // 2. Calls the SDK's `return_value()` method with the buffer as the argument.
@@ -69,7 +46,7 @@ impl Fold for TransformReturnExpr {
                     let ret_variable = #ret_val;
                     let mut return_value_buffer: Vec<u8> = Vec::new();
                     ret_variable.serialize(&mut return_value_buffer).unwrap();
-                    #sdk_variable_name.return_value(return_value_buffer);
+                    Transaction::return_value(return_value_buffer);
                 }
             );
     
@@ -87,13 +64,13 @@ impl Fold for TransformReturnExpr {
 
 
 /// `transform_contract_entrypoint` performs the following items:
-///  1. Gets all the nodes required to transform the `contract()` entrypoint.
-///. 2. Moves the SDK definition from an argument in `contract()` entrypoint
+///  1. Gets all the nodes required to transform the `actions()` entrypoint.
+///. 2. Moves the SDK definition from an argument in `actions()` entrypoint
 ///     to a variable assignment within the entrypoint.
-///  3. Traverses through the syntax tree of the `contract()` entrypoint's body of 
+///  3. Traverses through the syntax tree of the `actions()` entrypoint's body of 
 ///.    statements to get explicit calls to `return` and the last return statement 
 ///     if any. Transforms the mentioned "returns" into the SDK's `return_value()` method.
-///  4. Generates the new `contract()` entrypoint in the smart contract source code.
+///  4. Generates the new `actions()` entrypoint in the smart contract source code.
 /// 
 /// The rationale for this is illustrated below:
 ///  1. Encourage smart contract developers to write smart contracts in idiomatic rust.
@@ -104,68 +81,51 @@ impl Fold for TransformReturnExpr {
 pub(crate) fn transform_contract_entrypoint(entrypoint_node: &mut ItemFn) -> TokenStream {
 
     ///////////////////////////////////////////////////////////////////////////
-    // 1. Gets all the nodes required to transform the `contract()` entrypoint.
+    // 1. Gets all the nodes required to transform the `actions()` entrypoint.
     ///////////////////////////////////////////////////////////////////////////
     // check if there is more than one argument to the entrypoint function
     if *&entrypoint_node.sig.inputs.len() as i32 != 1 {
         return generate_compilation_error(
             "ERROR: when using entrypoint_bindgen macro,
             please only set the smart contract sdk 
-            (smart_contract::Transaction<A> as the only argument
-            to the contract() entrypoint function.)".to_string());
+            (smart_contract::Transaction as the only argument
+            to the actions() entrypoint function.)".to_string());
     }
     
     // `entrypoint_argument` is the SDK itself.
     let entrypoint_argument = 
-        // SAFETY: The `contract()` entrypoint only takes in the
-        // SDK (smart_contract::Transaction<A>) as its argument.
+        // SAFETY: The `actions()` entrypoint only takes in the
+        // SDK (smart_contract::Transaction) as its argument.
         match &entrypoint_node.sig.inputs.first().unwrap() {
             FnArg::Typed(pt) => {
                 pt
             }
             _ => unreachable!(),
     };
-
-    // Parses the variable name of the SDK
-    let sdk_variable_name = 
-        if let Pat::Ident(pi)= &*entrypoint_argument.pat {
-            &pi.ident
-        } else {
-            unreachable!()
-    };
-
-    // generic_parameter (A) is any type supplied to  the SDK (smart_contract::Transaction).
-    // It accepts any primitive or non-primitive types. 
-    let generic_parameter = 
-        if let Type::Path(tp) = &*entrypoint_argument.ty {
-                tp.path.segments.first().unwrap().arguments.to_owned()
-            } else {
-                unreachable!()
-    };
     
     /////////////////////////////////////////////////////////////////////////////
-    //  2. Moves the SDK definition from an argument in `contract()` entrypoint
+    //  2. Moves the SDK definition from an argument in `actions()` entrypoint
     //     to a variable assignment within the entrypoint.
     ////////////////////////////////////////////////////////////////////////////
     let sdk_contract_statement: Stmt = parse_quote! {
-        let #entrypoint_argument = smart_contract::Transaction::#generic_parameter::new();
+        let #entrypoint_argument = smart_contract::Transaction::new();
     };
 
-    // vector to contain all of the transformed statements in the `contract()` entrypoint
+    // vector to contain all of the transformed statements in the `actions()` entrypoint
     let mut transformed_contract_statements: Vec<Stmt> = Vec::new();
     
     // appends the SDK as the first statement in the vector.
     transformed_contract_statements.push(sdk_contract_statement);
     
     /////////////////////////////////////////////////////////////////////////////////////////
-    // 3. Traverses through the syntax tree of the `contract()` entrypoint's body of 
+    // 3. Traverses through the syntax tree of the `actions()` entrypoint's body of 
     //    statements to get explicit calls to `return` and the last return statement 
     //    if any. Transforms the mentioned "returns" into the SDK's `return_value()` method.
     /////////////////////////////////////////////////////////////////////////////////////////
     // Append the rest of the existing contract_statements
     if entrypoint_node.block.stmts.len() != 0 {
 
-        // Gets the return type from `contract()` entrypoint. Any child of a `ReturnType` node
+        // Gets the return type from `actions()` entrypoint. Any child of a `ReturnType` node
         // will be assigned to a variable and have its typed inferred to said return type.
         let return_type: Option<Type> = if let syn::ReturnType::Type(_, t) = &entrypoint_node.sig.output {
             Some(*t.to_owned())
@@ -174,25 +134,23 @@ pub(crate) fn transform_contract_entrypoint(entrypoint_node: &mut ItemFn) -> Tok
         };
 
 
-        // Transforms the last_statement of `contract()` into a call to SDK's `return_value()` 
+        // Transforms the last_statement of `actions()` into a call to SDK's `return_value()` 
         // if there are any explicit calls to return. 
         let transformed_last_statement = 
             transform_last_expression_to_sdk_return(
-                sdk_variable_name,
                 &entrypoint_node.block.stmts.pop().unwrap(),
                 return_type.as_ref()
         );
   
-        // checks for the number of statements in the `contract()` entrypoint.
+        // checks for the number of statements in the `actions()` entrypoint.
         // If this is zero, the only statements available in the entrypoint are
         // the SDK initialization and the last statement.
         if entrypoint_node.block.stmts.len() > 0 {
-            // Transforms any statements in `contract()` that explicitly calls
+            // Transforms any statements in `actions()` that explicitly calls
             // a return keyword.
             for statement in &entrypoint_node.block.stmts {
                 let transformed_contract_statement = 
                     transform_qualified_contract_statement_to_sdk_return(
-                        &sdk_variable_name,
                         statement
                     );
                 transformed_contract_statements.push(
@@ -201,7 +159,7 @@ pub(crate) fn transform_contract_entrypoint(entrypoint_node: &mut ItemFn) -> Tok
         } 
 
         // append the transformed last statement to the block of statements
-        // in the `contract()` entrypoint.
+        // in the `actions()` entrypoint.
         for return_statement in transformed_last_statement {
             transformed_contract_statements.push(return_statement);
         }
@@ -209,7 +167,7 @@ pub(crate) fn transform_contract_entrypoint(entrypoint_node: &mut ItemFn) -> Tok
     }
 
     ///////////////////////////////////////////////////////////////////////////////////
-    //  4. Generates the new `contract()` entrypoint in the smart contract source code.
+    //  4. Generates the new `actions()` entrypoint in the smart contract source code.
     ///////////////////////////////////////////////////////////////////////////////////
     let transformed_item_fn = transform_item_fn_node(
         entrypoint_node.to_owned(),
@@ -224,16 +182,15 @@ pub(crate) fn transform_contract_entrypoint(entrypoint_node: &mut ItemFn) -> Tok
 
 
 // `transform_last_expression_to_sdk_return` function does the following:
-// a. Extracts the `last_statement` from the block of statements inside `contract()` entrypoint.
+// a. Extracts the `last_statement` from the block of statements inside `actions()` entrypoint.
 // b. Prepares a return variable for serialization. 
 // c. Serializes the return variable in "b" and feeds it as an argument to the SDK's `return_value()` method.
 fn transform_last_expression_to_sdk_return(
-    sdk_variable_name: &Ident,
     last_statement: &Stmt,
     return_type: Option<&Type>,
 ) -> Vec<Stmt> {
     ////////////////////////////////////////////////////////////////////////////////////////////////
-    // a. Extracts the `last_statement` from the block of statements inside `contract()` entrypoint.
+    // a. Extracts the `last_statement` from the block of statements inside `actions()` entrypoint.
     ////////////////////////////////////////////////////////////////////////////////////////////////
     let last_expression =
     extract_expression_from_last_statement(last_statement);
@@ -263,7 +220,7 @@ fn transform_last_expression_to_sdk_return(
                         
                         // If the last statement is inside a `Result` enum, the value inside `Result` will be unwrapped.
                         // This value will be assigned to `sdk_variable_return_name`. `sdk_variable_return_name` will be
-                        // inferred with the return type of `contract()` entrypoint. Otherwise, ignore the unwrap process
+                        // inferred with the return type of `actions()` entrypoint. Otherwise, ignore the unwrap process
                         // and use the return type directly. 
                         let transformed_last_statement: Vec<Stmt> = parse_quote!(
                             let #sdk_variable_return_name: #return_type = #last_expression;
@@ -275,7 +232,7 @@ fn transform_last_expression_to_sdk_return(
                             /////////////////////////////////////////////////////////////////////////////////////////////////////////////
                             unwrapped_sdk_variable_return_name.serialize(&mut return_value_buffer)
                                                               .unwrap();
-                            #sdk_variable_name.return_value(return_value_buffer);
+                            Transaction::return_value(return_value_buffer);
                         );
 
                         transformed_last_statement
@@ -283,7 +240,7 @@ fn transform_last_expression_to_sdk_return(
                     } else {
                         // If the last statement is inside a `Result` enum, the value inside `Result` will be unwrapped.
                         // This value will be assigned to `sdk_variable_return_name`. `sdk_variable_return_name` will be
-                        // inferred with the return type of `contract()` entrypoint. Otherwise, ignore the unwrap process
+                        // inferred with the return type of `actions()` entrypoint. Otherwise, ignore the unwrap process
                         // and use the return type directly. 
                         let transformed_last_statement: Vec<Stmt> = parse_quote!(
                             let #sdk_variable_return_name: #return_type = #last_expression;
@@ -294,7 +251,7 @@ fn transform_last_expression_to_sdk_return(
                             /////////////////////////////////////////////////////////////////////////////////////////////////////////////
                             #sdk_variable_return_name.serialize(&mut return_value_buffer)
                                                      .unwrap();
-                            #sdk_variable_name.return_value(return_value_buffer.as_ref());
+                            Transaction::return_value(return_value_buffer.as_ref());
                         );
                         
                         transformed_last_statement
@@ -305,8 +262,8 @@ fn transform_last_expression_to_sdk_return(
             }
 
         },
-        // If there is no return value in the `contract()` function, add the last statement 
-        // to the block of statements in `contract()` entrypoint.
+        // If there is no return value in the `actions()` function, add the last statement 
+        // to the block of statements in `actions()` entrypoint.
         None => {
             let untransformed_last_statement = last_statement.to_owned();
             let untransformed_last_statement: Vec<Stmt> = parse_quote!(
@@ -350,17 +307,14 @@ fn extract_expression_from_last_statement(last_statement: &Stmt) -> &Expr {
 
 // `transform_qualified_contract_statement_to_sdk_return` is a wrapper function for
 // TransformReturnExpr.fold_expr that transforms any explicit calls to return 
-// in `contract()` to the SDK's `return_value()` method. See `TransformReturnExpr`
+// in `actions()` to the SDK's `return_value()` method. See `TransformReturnExpr`
 // for a more detailed explanation of what it does.
 fn transform_qualified_contract_statement_to_sdk_return(
-    sdk_variable_name: &Ident,
     statement: &Stmt
 ) -> Stmt {
 
     // initializes the Transformation struct to do the tree traversal.
-    let mut transformation_struct = TransformReturnExpr {
-        sdk_variable_name: sdk_variable_name.to_owned(),
-    };
+    let mut transformation_struct = TransformReturnExpr {};
 
     // If the node contains an explicit return statement.
     match statement {
@@ -406,7 +360,7 @@ fn transform_item_fn_node(
     transformed_contract_statements: Vec<Stmt>,
 ) -> ItemFn {
 
-    // get the transformed statements in `contract()` entrypoint
+    // get the transformed statements in `actions()` entrypoint
     let transformed_block: Box<Block> = Box::new(
         Block{
             brace_token: token::Brace::default(),

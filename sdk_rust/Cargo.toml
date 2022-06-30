@@ -1,0 +1,13 @@
+[package]
+name = "smart_contract"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+doctest = false
+
+[dependencies]
+borsh = "0.9"
+base64 = "0.13"
+protocol_types = { path = "../../protocol_types" }
+smart_contract_macros = { path = "smart_contract_macros" }

@@ -1,21 +1,3 @@
-/*
- Copyright (c) 2022 ParallelChain Lab
-
- This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation, either version 3 of the License, or
- (at your option) any later version.
-
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with this program.  If not, see <https://www.gnu.org/licenses/>.
- */
-
-
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::ItemStruct;
@@ -56,17 +38,18 @@ pub(crate) fn generate_sdk_typed_methods(argument_struct_definition_node: &ItemS
 
         #argument_struct_definition_node
 
-        impl #sdk_typed_trait for smart_contract::Transaction<#argument_struct_type_name> {
+        impl #sdk_typed_trait for smart_contract::Transaction {
 
             fn #typed_get(&self, key: &[u8]) -> Option<#argument_struct_type_name> {
 
                 // takes the byte string and deserializes it using borsh
-                match self.get(key) {
+                match Transaction::get(key) {
                     Some(raw_result) => {
-                        match BorshDeserialize::deserialize(&mut raw_result.as_ref()) {
+                        let p :Option<#argument_struct_type_name> = match BorshDeserialize::deserialize(&mut raw_result.as_ref()) {
                             Ok(d) => Some(d),
                             Err(_) => None,
-                        }
+                        };
+                        p
                     },
                     None => None
                 }
@@ -78,12 +61,10 @@ pub(crate) fn generate_sdk_typed_methods(argument_struct_definition_node: &ItemS
                 let mut buffer: Vec<u8> = Vec::new();
                 value.serialize(&mut buffer).unwrap();
 
-                self.set(key, buffer.as_ref());
+                Transaction::set(key, buffer.as_ref());
             }
 
         }
     
     }.into()
-
-
 }
