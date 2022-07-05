@@ -1,7 +1,11 @@
 [package]
-name = "smart_contract"
+name = "pchain-sdk"
 version = "0.2.0"
+authors = ["ParallelChain Lab <info@parallelchain.io>"]
 edition = "2021"
+description = "parallelchain-sdk: Smart Contract Development Kit (SDK for ParallelChain Mainnet"
+license = "GPL-3.0"
+repository = "https://github.com/parallelchain-io/parallelchain-sdk"
 
 [lib]
 doctest = false
@@ -9,5 +13,5 @@ doctest = false
 [dependencies]
 borsh = "0.9"
 base64 = "0.13"
-protocol_types = { path = "../../protocol_types" }
-smart_contract_macros = { path = "smart_contract_macros" }
+protocol_types = { package = "pchain-types", version = "0.2" }
+pchain-sdk-macros = { path = "smart_contract_macros", version = "0.2" }

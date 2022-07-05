@@ -1,3 +1,20 @@
+/*
+ Copyright (c) 2022 ParallelChain Lab
+
+ This program is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 use crate::Callback;
 use crate::context::ContractCallData;
 use crate::imports::*;
@@ -210,8 +227,10 @@ impl Transaction {
     pub fn call_contract(contract_address : protocol_types::PublicAddress, method_name:&str, arguments :Vec<u8>, value :u64, gas :u64) -> Option<Vec<u8>> {
         let contract_address_ptr : *const u8 = contract_address.as_ptr();
 
-        let value_ptr :*const u64 = &value;
-        let gas_ptr :*const u64 = &gas;
+        let value_bs = value.to_le_bytes().to_vec();
+        let value_ptr :*const u8 = value_bs.as_ptr();
+        let gas_bs = gas.to_le_bytes().to_vec();
+        let gas_ptr :*const u8 = gas_bs.as_ptr();
 
         let mut val_ptr: u32 = 0;
         let val_ptr_ptr = &mut val_ptr;
@@ -305,7 +324,8 @@ impl Transaction {
     /// Return the remaining balance of the receiver's account
     pub fn pay(address : protocol_types::PublicAddress, value : u64) -> u64 {
         let contract_address_ptr : *const u8 = address.as_ptr();
-        let value_ptr :*const u64 = &value;
+        let value_vs = value.to_le_bytes().to_vec();
+        let value_ptr :*const u8 = value_vs.as_ptr();
         unsafe {
             raw_pay(contract_address_ptr, value_ptr as *const u8)
         }
