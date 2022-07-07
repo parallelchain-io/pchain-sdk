@@ -12,6 +12,5 @@ doctest = false
 
 [dependencies]
 borsh = "0.9"
-base64 = "0.13"
 protocol_types = { package = "pchain-types", version = "0.2" }
 pchain-sdk-macros = { path = "smart_contract_macros", version = "0.2" }

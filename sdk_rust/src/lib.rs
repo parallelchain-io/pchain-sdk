@@ -35,10 +35,9 @@ pub use pchain_sdk_macros::{
 
 pub use pchain_sdk_macros::ContractField;
 
-use base64;
 // associated function to perform conversion of contract address to PublicAddress 
 pub fn decode_contract_address(address: String) -> protocol_types::PublicAddress {
-    base64::decode(address).unwrap().try_into().unwrap()
+    protocol_types::Base64URL::decode(&address).unwrap().try_into().unwrap()
 }
 
 use borsh::{BorshSerialize, BorshDeserialize};
