@@ -161,24 +161,26 @@ pub trait Storage {
 /// 
 /// ### Example
 /// ```no_run
-/// // Use default() to instantiate Cacher
-/// let cacher: Cacher<u64> = Cacher::default();
+/// // Use new() to instantiate Cacher
+/// let cacher: Cacher<u64> = Cacher::new();
 /// // Defer-ed on behalf of the u64 data. Actual world state read happens once
 /// let b = cacher.saturating_add(123);
 /// // Value assignment after Defer-ed. No world state write. Actually write is handled afterwards by SDK.
 /// *cacher = 123_u64;
 /// ```
 pub struct Cacher<T> where T: Storage {
-    /// `scoped` defines the key format to store data T into world state
-    scoped: StorageField,
+    /// `scope` defines the key format to store data T into world state
+    scope: StorageField,
     // None if Cacher is never Deref-ed into.
     inner: UnsafeCell<Option<T>>,
 }
 
 impl<T> Cacher<T> where T: Storage {
-
-    pub fn default() -> Self {
-        Self { scoped: StorageField::new(), inner: UnsafeCell::new(None) }
+    pub fn new() -> Self {
+        Self {
+            scope: StorageField::new(),
+            inner: UnsafeCell::new(None),
+        }
     }
 
     /// lazy read from world state
@@ -189,7 +191,7 @@ impl<T> Cacher<T> where T: Storage {
             let inner = &mut *inner_ptr;
             if inner.is_none() {
                 *inner = Some(
-                    T::__load_storage_field(&self.scoped)
+                    T::__load_storage_field(&self.scope)
                 );
             }
         }
@@ -237,7 +239,7 @@ impl<T> DerefMut for Cacher<T> where T: Storage {
 impl<T> Storage for Cacher<T> where T: Storage{
     fn __load_storage(field :&StorageField) -> Self {
         Cacher {
-            scoped: field.clone(),
+            scope: field.clone(),
             inner: UnsafeCell::new(None),
         }
     }
