@@ -1,10 +1,10 @@
 [package]
 name = "pchain-sdk-macros"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["ParallelChain Lab <info@parallelchain.io>"]
 edition = "2021"
 description = "parallelchain-sdk: macro implementation for SDK"
-license = "GPL-3.0"
+license = "Apache-2.0"
 repository = "https://github.com/parallelchain-io/parallelchain-sdk"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -17,3 +17,4 @@ snakecase = "0.1"
 syn = {version = "1.0", features = ["fold", "full"]}
 quote = "1.0"
 proc-macro2 = "1.0"
+pchain-types = "0.3"

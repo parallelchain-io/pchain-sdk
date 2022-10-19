@@ -1,0 +1,17 @@
+[package]
+name = "pchain-sdk"
+version = "0.3.0"
+authors = ["ParallelChain Lab <info@parallelchain.io>"]
+edition = "2021"
+description = "The ParallelChain F Smart Contract Development Kit (SDK)."
+license = "Apache-2.0"
+repository = "https://github.com/parallelchain-io/parallelchain-sdk"
+
+
+[lib]
+doctest = false
+
+[dependencies]
+borsh = "0.9"
+pchain-types = "0.3"
+pchain-sdk-macros = "0.3"

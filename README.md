@@ -1,253 +1,184 @@
-# ParallelChain F Smart Contract SDK
+# ParallelChain F Contract SDK
 
-ParallelChain F Smart Contract SDK (pchain-sdk) provide Rust structs, functions, types, and macros that aid with the development of smart contracts executable in WebAssembly (WASM) engines implementing the ParallelChain F Smart Contract Virtual Machine (VM) specification.  
+The ParallelChain F Contract SDK (pchain-sdk) provides Rust structs, functions, types, and macros that aid with the development of smart contracts executable in WebAssembly (WASM) engines implementing the ParallelChain F Contract ABI Subprotocol.  
 
-pchain-sdk enable developers to write Smart Contracts in a idiomatic and highly-readable style. The SDK's macros  transparently generate lower-level 'boilerplate' code for you, so that you can focus on writing the business logic of your application.
+Contracts are the run-time programmability mechanism of ParallelChain F networks. They allow users (Account owners) to implement arbitrary logic in a global, decentralized, and Byzantine Fault Tolerant replicated state machine to support their most business-critical applications. 
 
-In particular, pchain-sdk is inspired by the Object-Oriented Programming (OOP) style. In the pchain-sdk model, a contract is simply a Rust struct that is associated with a set of functions and methods that are callable from the outside world (entrypoints).A quick glossary of the most important terms used in this README:
+Theoretically, any WebAssembly (WASM) module that implements the Contract ABI Subprotocol can be deployed onto a ParallelChain F blockchain. Practically, however, all developers (except perhaps those who like to experiment, or that would like to stretch the limits of the system) will want to use the types and macros in this `pchain-sdk` to write a Contract in Rust, and the commands in `pchain-compile` to compile the Rust source code into WASM bytecode that can be included in a Deploy Transaction. 
 
-- **Entrypoint**: a starting point of contract execution. There are few kinds of entrypoints:
-  - **Init Method**: an (optional) entrypoint that is called during contract deployment transaction.
-  - **Action Method**: an entrypoint that is called in EtoC transactions, and that can read from and write into the blockchain World State.
-  - **Views Method**: entrypoint that is limited to executing read-only operaions.
-- **Contract Metadata**: a descriptive string to describe the entrypoint methods inside a contract. pchain-sdk exposes a macro that can automatically generate Contract Metadata for you.
-- **Contract Storage**: persistent set of data that is accessible to a contract and its methods. It is internally implemented as a key-value storage in the blockchain World State.
+## The Contract Programming Model
 
-## Entrypoint
+pchain-sdk enable developers to write Smart Contracts in an intuitive and readable style we call "The Contract Programming Model". The SDK's macros transparently generate lower-level 'boilerplate' code for you, so that you can focus on writing the business logic of your application.
 
-ParallelChain smart contract execution engine recognizes certain functions defined in a contract as entrypoint. The recognized functions with designated function name are called **Entrypoints**:
+The Contract Programming Model is inspired by Object-Oriented Programming (OOP). In the Model, a Contract can be thought of as a Rust struct that controls access to persistent Storage. Accounts interact with Contracts by making EtoC Transactions calling its public methods, or just Methods for short. The following two sections elaborate on the two essential concepts of programming with the Contract Programming Model: Contract Methods, and Contract Storage.
 
-|Function name | Entrypoint | SDK Support |
-| :--- | :--- | :---|
-|init| An entrance that will be entered once during the contract deployment.| Optional |
-|actions| Starting point of execution when contract is being called in EtoC transaction.| Required|
-|views| An entrance that can be entered in EtoC transaction or request from REST API | Optional |
+## Contract Methods
 
-## Define Contract Entrypoint
+The Model defines three kinds of Methods, each corresponding to an 'Entrypoint' in the Contract ABI Subprotocol.
 
-A very basic type of entrypoint is a function with name "contract". The macro `#[contract_init]` transforms the "contract" function to an extern "C" function 
-so that it is callable to fullnode executor when the contract deployed as wasm file.
+1. **Action Methods**: can mutate Contract Storage. Can only be called through an on-chain, EtoC Transaction.
+2. **View Methods**: can read, but not mutate Contract Storage. Can be called through the 'Contract View' endpoint of the Standard HTTP API, as well as through on-chain EtoC Transactions.
+3. **Init Methods**: if defined on a Contract, is called *once* during the Contract's Deploy Transaction. In OOP lingo, this can be thought of as the 'constructor' of a Contract.
 
-Before transforming,
-```rust
-#[contract_init]
-pub fn actions(tx: Transaction) {
-    ...
+In order to produce to appropriate Contract ABI Exports Set bindings that ultimately allow Methods to be called from the outside world, you must write Method definitions inside an `impl Contract` statement marked with the `#[contract_methods]` macro, as illustrated in the following examples.
 
-```
-
-
-After transforming,
-```rust
-#[no_mangle]
-pub extern "C" fn actions() {
-    ...
-```
-
-## Contract Storage as a Struct 
-
-Contract can perform set and get of data to its own world-state just like an object can access and modify its own fields in common programming languages.
-The concept is applied here to provide a structure that is familiar to contract developers. The macro `#[contract]` applied to a struct will create getter and setter methods for the fields inside.
+### Action Methods
 
 ```rust
-#[contract]
-struct MyContract{
-    data: i32
-}
-```
+#[contract_methods(meta)]
+impl PrinceTheDog {
 
-In the body of smart contract, it can access the data and update it without explicity calling `smart_contract::Transaction::get` and `smart_contract::Transaction::set`, take care of name of the key and arguments parsing. 
-
-In this model,
-- Key is an index in u8 integer format (hence, the maximum number of fields is 256). The above example, the key will be [0x0]. The order of intex is as same as the order of fields defined in the struct. 
-- Value are borsh-serializable and borsh-deserializable
-- Value is primitive types (i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, usize, String, bool, Vec\<T\> where T is a primitive type)
-
-### Nested struct
-
-Nested struct is supported by deriving macro trait named `ContractField`. The nested struct also follows key-value conditions as same as Contract struct.
-
-```rust
-#[derive(ContractField)]
-struct MyField {
-    data1: u64,
-    data2: i32
-}
-
-#[contract]
-struct MyContract {
-    my_field :MyField
-}
-```
-In the above example, the key for storing in world-state will be [0x0, 0x0] for `data1` and [0x0, 0x1] for `data2` while the value stored in world-state will be borse-serialized u64 data.
-
-### Getter and Setter
-
-SDK provides convenience to access data in Contract Storage by creating getter and setting methods of fields defined in the contract struct.
-If field name is `data`, then associate methods `get_data` and `set_data` could be called to obtain data stored in the Contract Storage.
-
-For example,
-```rust
-#[contract]
-struct MyContract {
-    my_field :String
-}
-
-// Example
-...
-MyContract::set_my_field("store to storage".to_string());
-let stored_data: String = MyContract::get_my_field();
-assert_eq!("store to storage".to_string(), stored_data);
-```
-
-__note__: Getter and setter methods are not generated for Contract Field. Getting and setting this field will always load/save all data from/to Contract Storage.
-
-## Entrypoint Methods as functions in an Impl
-
-Contract can be invoked to carry out different operations just like accessing methods of an object or class in common programming languages. 
-The concept is applied here to allow developers specify functions in an impl as entrypoint methods.
-The macro `#[contract]` applied to an impl with macro `action` will generate a skeleton code that executes a method according to the function name in input arguments from caller.
-
-
-Example:
-```rust
-#[contract]
-impl MyContract {
-    
-    #[actoon]
-    fn get_data(&self) -> i32 { 
-        ...
-    }
-    
     #[action]
-    fn set_data(&mut self, d1 :i32) {
+    pub fn eat_food(&mut self, food: DogFood) -> Poop {
         ...
     }
 }
 ```
 
+Actions Methods may mutate Contract Storage. Note however, that (as specified in the Transaction Subprotocol) mutations to Contract Storage made in an EtoC Transaction only get applied if the Transaction is Successful (e.g., the Transaction must exit with sufficient gas, must have not panicked during execution, etc.).
 
-The generated skeleton consists of a `match` selector to find a matching `str` to the function name, and then execute it.
+A function is callable as an Action Method if and only if:
+1. It is marked using the `#[action]` macro.
+2. It takes a `&mut` receiver in its argument list.
+3. Its (zero or more) other arguments implement `BorshDeserialize`.
+4. Its return value implements `BorshSerialize`, or it does not have a return value.
 
-Example
-```rust
-match ctx.get_method_name() {
-    "get_data" => {
-        // code block to execute the function
-        ...
-    }
-    ...
-    _=>{ unimplemented!() }    
-}
-
-```
-
-__note__:
-- avoid defining method name with prefix `get_` or `set_` followed by field name because it causes conflicts with getter and setting methods that are auto-generated by SDK.
-- if the method takes the immutable receiver `&self` as first argument, data is loaded from storage before execution. It is __expensive__ operation.
-- if the method takes the mutable receiver `&mut self` as first argument, data is loaded from storage before execution and saved back to storage after execution. It is __expsnsive__ operation.
-
-
-#### Input arguments from caller
-
-The arguement inputted to the method is in format of `Vec<u8>`. It is composited of leading 4 bytes as format version number and the raw bytes representing a borsh-serialized struct.
-
-```
-[format version (4 bytes)][raw content (bytes)]
-```
-- Format version is u32 integer and converted to 4 bytes in little endian format. It determines the way to decode raw content. Current version = 0.
-- Raw content refers to the struct CallData:
-```rust
-pub struct CallData{
-    method_name :String,
-    arguments :Vec<u8>,
-}
-```
-- entrypoint is the name of the function of impl.
-- arguments Vec\<u8\> which is also borsh-deserializable to **Vector of Vec\<u8\>**. For example,
+### View Methods
 
 ```rust
-fn entrypoint_1(data :i32, name :String) { ...
-```
-Then, **Vector of Vec\<u8\>** is a vector = {"data", "name"} where "data" and "name" are Borsh-Serialized bytes.
-
-CallData is parsed from the transaction arguement. The parsing logics follows the procedure below:
-- first 4 bytes are version bytes which match CALLDATA_VERSION
-- if it is less than 4 bytes, it assumes version = 0 and CallData is returned with "empty" data
-- panic if version does not match with CALLDATA_VERSION
-- the rest of the bytes are borsh-serialized from the structure CallData
-
-
-#### Return Value to Contract Call
-
-The return value from a contract call is in format of `Vec<u8>`. It is borsh-seralizable so that it is up to developer to design the response data structure.
-
-```rust
-pub struct Callback {
-    return_val :Vec<u8>
-}
-```
-
-## Contract MetaData
-
-Contract MetaData is descriptive information about the contract's entrypoint methods. It is represented as a trait of the contract.
-
-Example:
-```rust
-pub trait HelloContract {
-    fn hello();
-    fn hello_from(name:String) -> u32;
-}
-```
-
-Smart contract developers can share or even publish this information to the public so that others can interact with the contract in a proper way.
-
-To enable this feature in contract, add keyword "meta" as attribute to the contract macro.
-
-```rust
-#[contract(meta)]
-impl MyContract {
-    ...
-}
-```
-
-Under the hood, SDK generates a static slice variable `__contract_metadata__` terminated by character '\0'. Its data resides in the memory section of the wasm code, which can be recognized by ParallelChain mainnet nodes.
-
-## Init Entrypoint
-
-The Init entrypoint is optional in the contract. It is enabled if the contract defines a constructor in contract Impl.
-
-```rust
-#[contract]
-impl MyContract {
-
-    /// Init entrypoint method 
-    #[init]
-    fn init_my_contract() {
-        ...
-```
-
-Tne init entrypoint methods are recognized in the same way of actions entrypoint methods except that 
-- macro `init` is applied on the method
-- must be associate method (no recevier, i.e. self, as method argument)
-- there should be only one `init` entrypoint method
-
-## View Entrypoint
-
-View entrypoint is optional in the contract. It is enabled by applying macro `view` on a method inside contract impl.
-
-```rust
-#[contract]
-impl MyContract {
+#[contract_methods(meta)]
+impl PrinceTheDog {
 
     #[view]
-    pub fn view_my_data() -> i32 {
+    pub fn nicknames(&self) -> Vec<String> {
         ...
     }
 }
 ```
 
-Tne view entrypoint methods are recognized in the same way of actions entrypoint methods except that 
-- macro `view` is applied on the method
-- must be associate method (no recevier, i.e. self, as method argument)
+View Methods have a consistent read-view into Contract Storage. The special thing about View Methods is that they may be called without incurring gas using the Contract View endpoint of the Standard HTTP API. Note however that calling them as part of a Contract Internal Transaction, does incur gas at normal rates.
 
+A function is callable as a View Method if and only if:
+1. It is marked using the `#[view]` macro.
+2. It takes a `&self` receiver in its argument list.
+3. Its (zero or more) other arguments implement `BorshDeserialize`.
+4. Its return value implements `BorshSerialize`, or it does not have a return value. 
+
+### Init Methods
+
+```rust
+#[contract_methods(meta)]
+impl PrinceTheDog {
+
+    #[init]
+    fn init(dog_shelter: DogShelter) -> PrinceTheDog {
+        ...
+    }
+```
+
+The purpose of an Init Method is to initialize a Contract's Storage. A Contract can have zero or one Init Methods defined on it. An Init Method has full access to Contract Storage, just like an Action Method, but unlike an Action Method, it may not take `self` (or borrows of `self`) in its arguments list.
+
+A function is callable as an Init Method if and only if: 
+1. It is marked using the `#[init]` macro.
+2. It does not take `self` or its borrows in its arguments list.
+3. Its (zero or more) arguments implement `BorshDeserialize`.
+4. It returns an instance of the Contract type.
+
+## Accepting parameters and returning values
+
+Some of the code snippets provided as examples in this document depict Contract Methods that take in function arguments (besides a borrow of the Contract struct) and/or return a value. In order for a Contract to receive arguments from and return values to the 'outside world' (callers), both Contract and caller need to agree on a serialization format.
+
+`pchain-sdk` expects callers to serialize Method arguments using the [borsh](https://github.com/near/borsh) serialization standard, and generates code to serialize values into borsh for inclusion in a Transaction's Receipt, or transmission over the wire as part of the response for the Contract View endpoint of the Standard HTTP API. To be precise, EtoC Transactions specify the Contract Method to call and provide the arguments for the call by including a borsh-serialized `CallData` struct in its `data` field, and contracts include a borsh-serialized `CallResult` struct. The former type is defined in `pchain-types`, while the latter is defined in `pchain-sdk`. In the future, we plan to move both into the SDK. 
+
+## Contract Storage
+
+Contracts can use Storage to persist data between calls. The simplest way to read and write data into Storage is to add fields to the Contract struct:
+```rust
+#[contract]
+struct PrinceTheDog {
+    age: u8, 
+    breed: String,
+    hungry: bool,
+    toy: DogToy,
+}
+```
+
+The `#[contract]` macro transparently generates code that loads all of a Contract struct's fields from Storage before the execution of an Action or View method, and saves those fields into Contract Storage after an Action or View method returns. All types that implement the `Storable` trait can be used as a Contract field. Out of the box, this includes all Rust primitive types, as well as other commonly used types like `Option<T>`, `Result<T>`, `Vec<T>`, etc. In addition, structs defined by the developer can be made to implement `Storable` by applying the `#[contract_field]` macro on their definitions, provided that all of *their* fields implement Storable:
+```rust
+#[contract_field]
+struct DogToy {
+    ...
+}
+```
+
+If your Contract struct contains fields, then the Contract should export an Init Method to initialize those fields.
+
+### Storage and Collections
+
+Because Storage is so gas-expensive, loading all of a Contract's fields before Method execution and writing them all into Storage after execution typically results in Contracts that are not very economical. For Contracts that do not keep much in Storage, or whose Methods *always* read and write into most fields, this maybe okay, or even ideal, and in general, developers ought to try and program contracts to minimize Storage use.
+
+However, some applications cannot avoid keeping a lot of on-chain state, and for these applications eagerly loading and saving fields in every call may be unacceptably expensive. To solve this, the SDK includes a `pchain_sdk::collections` module. All of the types defined in this module 'lazily' load Storage: they only incur a read or write gas cost when the exact item in the collection is read from or written to. They also offer an API that can make working with large collections of data more convenient.
+
+If your Contract struct contains `collections` fields, then its Init Method must initialize these fields by calling the relevant collection type's `new` function. An example with Cacher:
+
+```rust
+struct PrinceTheDog {
+    name: Cacher<String>
+}
+
+impl PrinceTheDog {
+    #[init]
+    fn init() -> PrinceTheDog {
+        PrinceTheDog {
+            name: Cacher::new(),
+        }
+    }
+}
+```
+
+#### <u>Cacher (`Cacher<T>`)</u>
+
+Wraps over any non-collections type that implements `Storage` and makes them lazy (all other `collections` types are already lazy without Cacher). Cacher implements `Deref`, so `Cacher<T>` can be used *almost* everywhere `T` can be used without any special syntax. 
+
+#### <u>Vector (`Vector<T>`)</u>
+
+Lazily stores a list of items in `Storage`. Vector implements `Index`, `IndexMut`, and has an `iter` method, so most of the things you can do with `std::vec::Vec`, you can probably do with `Vector` too.
+
+A temporary limitation is that you cannot nest Vectors (e.g., `Vector<Vector<T>>`). This will be enabled in a near-future update to the SDK.
+
+#### <u>Maps (`FastMap<K, V>` and `IterableMap<K, V>`)</u>
+
+Collections include two types that store statically-typed mapping between keys and values. The difference between these two types is that IterableMap is, as its name suggests, iterable. i.e., it has the standard library's HashMap's `keys`, `iter`, and `values` sets of methods. This functionality comes at the cost of storing slightly more data in Storage than FastMap. Both types function identically otherwise, down to being able to nest like-Maps together (e.g., `FastMap<T, FastMap<K, V>>`).
+
+You should use IterableMap if your application absolutely needs to iterate through stored items, otherwise, use FastMap.
+
+## Accessing information about the Blockchain
+
+Contract Methods can be written to not only depend on call arguments and the contract's storage, but also on information about the Blockchain, e.g., the previous block hash, or the identity of the External Account that originated the EtoC Transaction. 
+
+Functions for getting information about the Transaction that triggered a Contract call and information about the larger Blockchain in general are defined in `pchain_sdk::transaction` and `pchain_sdk::blockchain` respectively. Internally, these functions are thin wrappers around functions defined in the Imports Set of the Contract ABI.
+
+## Calling other Contracts (unstable)
+
+The SDK includes two pairs of functions to make CtoC (contract-to-contract) internal calls:
+- `call_action` and `call_action_untyped`, and
+- `call_view` and `call_view_untyped`.
+
+Each pair does the obvious: the former calls an Action method in a specified Contract with the given arguments, the latter does the same with View methods.
+
+## Transferring balance
+
+`pchain_sdk::pay` transfers balance from the Contract Account to another Account and returns the balance of the recipient after the transfer.
+
+## Contract Metadata
+
+Contracts live in the World State as WASM bytecode. Like most bytecode, these are not designed to be human-readable. This means that it's virtually impossible for potential users of your Contract to discover the callable interface (set of exported Methods) of your Contract by querying for your Contract's code in the World State. This is where Contract Metadata comes in:
+
+```rust
+#[contract_methods(meta)]
+impl PrinceTheDog {
+    ...
+}
+```
+
+Passing the 'meta' option to the `#[contract_methods]` attribute causes code to be generated during expansion that enables users to get a String from the 'get metadata' route of the Standard HTTP API that describes the contract's callable interface.

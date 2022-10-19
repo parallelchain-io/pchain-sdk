@@ -1,34 +1,31 @@
 /*
- Copyright (c) 2022 ParallelChain Lab
+ Copyright 2022 ParallelChain Lab
 
- This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation, either version 3 of the License, or
- (at your option) any later version.
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
 
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
+     http://www.apache.org/licenses/LICENSE-2.0
 
- You should have received a copy of the GNU General Public License
- along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
  */
 
-use crate::{Transaction, convert_bytes};
-
 use borsh::{BorshSerialize, BorshDeserialize};
-use protocol_types::{CallData, Serializable, Deserializable};
+use pchain_types::{CallData as ProtocolCallData, Serializable, Deserializable};
+use crate::transaction;
 
 static CALLDATA_VERSION :u32 = 0;
 
-/// wrapper struct got protocol_types::CallData
-pub struct ContractCallData {
-    call_data :CallData
+/// wrapper struct got pchain_types::CallData
+pub struct CallData {
+    call_data: ProtocolCallData,
 }
 
-impl  ContractCallData {
-
+impl CallData {
     /// get method_name as &str from call_data
     pub fn get_method_name(&self) -> &str {
         self.call_data.method_name.as_str()
@@ -68,8 +65,8 @@ impl  ContractCallData {
     /// - if it is less than 4 bytes, it assumes version = 0 and CallData is returned with "empty" data
     /// - return None if version does not match with CALLDATA_VERSION
     /// - the rest of the bytes are borsh-serialized from the structure CallData
-    pub fn from_raw_call_data() -> Option<ContractCallData> {
-        let bs = Transaction::get_arguments();
+    pub fn from_raw_call_data() -> Option<CallData> {
+        let bs = transaction::data();
         let version = if bs.len() < 4 { 
             0
         } else { 
@@ -86,8 +83,8 @@ impl  ContractCallData {
         // Assume the caller indicates invoking the contract without entrypoint selection.
         if bs.len() <= 4 {
             return Some(
-                ContractCallData{
-                    call_data: CallData{
+                CallData{
+                    call_data: ProtocolCallData{
                         method_name : "".to_string(),
                         arguments: vec![]
                     }
@@ -95,10 +92,10 @@ impl  ContractCallData {
         }
         
         let bs = &bs[4..];
-        let deserialize_ret = CallData::deserialize(bs.as_ref());
+        let deserialize_ret = <ProtocolCallData as Deserializable<ProtocolCallData>>::deserialize(bs.as_ref());
         if !deserialize_ret.is_ok() { return None; }
-        let ctx :CallData = deserialize_ret.unwrap();
-        Some(ContractCallData {call_data: ctx})
+        let ctx: ProtocolCallData = deserialize_ret.unwrap();
+        Some(CallData {call_data: ctx})
     }
 
     /// contrust CallData structure for making contract calls.
@@ -111,11 +108,11 @@ impl  ContractCallData {
         let mut version_bs = (CALLDATA_VERSION as i32).to_le_bytes().to_vec();
         bs.append(&mut version_bs);
     
-        let ctx = CallData{
+        let ctx = ProtocolCallData {
             method_name: method_name.to_string(),
             arguments: args
         };
-        let mut call_data_bs = CallData::serialize(&ctx);
+        let mut call_data_bs = <ProtocolCallData as Serializable<ProtocolCallData>>::serialize(&ctx);
         bs.append(&mut call_data_bs);
         bs
     }
@@ -128,7 +125,7 @@ impl  ContractCallData {
 /// 
 /// # Basic example 
 /// ```no_run
-/// let args_builder = smart_contract::CallDataBuilder::new();
+/// let args_builder = pchain_sdk::CallDataBuilder::new();
 /// args_builder
 /// .add("i am string".to_string())
 /// .add(0_i32)
@@ -152,6 +149,6 @@ impl CallDataBuilder {
         self
     }
     pub fn to_call_arguments(&self) -> Vec<u8> {
-        convert_bytes(&self.args)
+        Vec::<Vec<u8>>::try_to_vec(&self.args).unwrap()
     }
 }
