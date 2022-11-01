@@ -58,15 +58,24 @@ impl<K, V> IterableMap<K, V>
      /// ```
      pub fn get(&self, key: &K) -> Option<V> {
         let key_bs = key.try_to_vec().unwrap();
-        self.get_inner(&key_bs)
+        match self.get_inner(&key_bs) {
+            Some((v, _)) => Some(v),
+            None => None,
+        }
     }
 
-    fn get_inner(&self, key_bs: &Vec<u8>) -> Option<V> {
+    fn get_inner(&self, key_bs: &Vec<u8>) -> Option<(V, bool)> {
         // search the cache with last update related to this key
         match self.write_set.get(key_bs) {
             Some(UpdateOperation::Delete) => { None }, // deleted key in cache
-            Some(UpdateOperation::Insert(value, _)) => { Some(value.clone()) }, // found key in cache
-            None=> { self.get_from_ws_by_key(&key_bs) } // get from world-state
+            Some(UpdateOperation::Insert(value, is_new_record)) => { Some((value.clone(), is_new_record.clone())) }, // found key in cache
+            None=> {
+                // get from world-state
+                match self.get_from_ws_by_key(&key_bs) {
+                    Some(value) => Some((value, false)),
+                    None => None
+                } 
+            } 
         }
     }
 
@@ -89,8 +98,8 @@ impl<K, V> IterableMap<K, V>
 
     fn get_mut_inner(&mut self, key_bs: &Vec<u8>) -> Option<&mut V> {
         match self.get_inner(key_bs) {
-            Some(iterable) => {
-                self.insert_inner(&key_bs, iterable, false);
+            Some((iterable, is_new_record)) => {
+                self.insert_inner(&key_bs, iterable, is_new_record);
                 match self.write_set.get_mut(key_bs) {
                     Some(UpdateOperation::Insert(mut_value, _)) => Some(mut_value),
                     _=> None
@@ -147,7 +156,10 @@ impl<K, V> IterableMap<K, V>
     /// ```
     pub fn keys(&self) -> IterableMapKeys<K, V> {
         let map_info_cell = self.get_map_info();
-        IterableMapKeys { iterable_map: self, idx: 0, level: map_info_cell.level, len: map_info_cell.sequence }
+        let extends: Vec<Vec<u8>> = self.write_set.iter().filter_map(|w|{
+            match w.1 { UpdateOperation::Insert(_, true) => Some(w.0.clone()), _ => None }
+        }).collect();
+        IterableMapKeys { iterable_map: self, idx: 0, level: map_info_cell.level, len: map_info_cell.sequence as usize, ext_idx: 0, extends }
     }
 
     /// Iterator to iterating values in the map as `Iterable`. Iterating is a Lazy Read operation.
@@ -159,7 +171,10 @@ impl<K, V> IterableMap<K, V>
     /// ```
     pub fn values(&self) -> IterableMapValues<K, V> {
         let map_info_cell = self.get_map_info();
-        IterableMapValues{ iterable_map: self, idx: 0, level: map_info_cell.level, len: map_info_cell.sequence}
+        let extends: Vec<Vec<u8>> = self.write_set.iter().filter_map(|w|{
+            match w.1 { UpdateOperation::Insert(_, true) => Some(w.0.clone()), _ => None }
+        }).collect();
+        IterableMapValues{ iterable_map: self, idx: 0, level: map_info_cell.level, len: map_info_cell.sequence as usize, extends, ext_idx: 0 }
     }
 
     /// Mutable Iterator to iterating values in the map as `&mut Iterable`. Iterating is a Lazy Read operation.
@@ -172,11 +187,17 @@ impl<K, V> IterableMap<K, V>
     /// ```
     pub fn values_mut(&mut self) -> IterableMapValuesMut<K, V> {
         let map_info_cell = self.get_map_info();
-        IterableMapValuesMut{iterable_map: self, idx: 0, level: map_info_cell.level, len: map_info_cell.sequence }
+        let extends: Vec<Vec<u8>> = self.write_set.iter().filter_map(|w|{
+            match w.1 { UpdateOperation::Insert(_, true) => Some(w.0.clone()), _ => None }
+        }).collect();
+        IterableMapValuesMut{iterable_map: self, idx: 0, level: map_info_cell.level, len: map_info_cell.sequence as usize, ext_idx: 0, extends }
     }
 
     // Map information
     fn get_map_info(&self) -> MapInfoCell {
+        if self.parent_key.is_empty() { // newly inserted map that is not yet save to world state
+            return MapInfoCell { level: 0, sequence: 0 };
+        }
         let ws_seq = self.wskey_map_info();
         MapInfoCell::load(ws_seq).unwrap()
     }
@@ -450,7 +471,9 @@ pub struct IterableMapKeys<'a, K, V>
     iterable_map: &'a IterableMap<K, V>,
     idx: usize,
     level: u32,
-    len: u32
+    len: usize,
+    ext_idx: usize,
+    extends: Vec<Vec<u8>>,
 }
 
 impl<'a, K, V> Iterator for IterableMapKeys<'a, K, V>
@@ -460,18 +483,21 @@ impl<'a, K, V> Iterator for IterableMapKeys<'a, K, V>
 
     fn next(&mut self) -> Option<K> {
         loop {
-            if self.idx >= self.len as usize {
-                return None
-            }
-
-            let ws_index_key = self.iterable_map.wskey_index_key(self.level, &(self.idx as u32));
-            let key_bytes = Vec::<u8>::load(ws_index_key.clone());
-            match key_bytes {
-                Some(bytes) => {
-                    self.idx += 1;
+            if self.idx >= self.len  {
+                if let Some(bytes) = self.extends.get(self.ext_idx) {
+                    self.ext_idx += 1;
                     return Some(K::deserialize(&mut bytes.as_slice()).unwrap())
                 }
-                None => {}
+                return None
+            } else {
+                let ws_index_key = self.iterable_map.wskey_index_key(self.level, &(self.idx as u32));
+                match Vec::<u8>::load(ws_index_key.clone()) {
+                    Some(bytes) => {
+                        self.idx += 1;
+                        return Some(K::deserialize(&mut bytes.as_slice()).unwrap())
+                    }
+                    None => {}
+                }
             }
             self.idx += 1;
         }
@@ -485,7 +511,9 @@ pub struct IterableMapValues<'a, K, V>
     iterable_map: &'a IterableMap<K, V>,
     idx: usize,
     level: u32,
-    len: u32
+    len: usize,
+    ext_idx: usize,
+    extends: Vec<Vec<u8>>,
 }
 
 impl<'a, K, V> Iterator for IterableMapValues<'a, K, V> 
@@ -495,20 +523,30 @@ impl<'a, K, V> Iterator for IterableMapValues<'a, K, V>
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if self.idx >= self.len as usize {
-                return None
-            }
-
-            let ws_index_key = self.iterable_map.wskey_index_key(self.level, &(self.idx as u32));
-            let key_bytes = Vec::<u8>::load(ws_index_key);
-            match key_bytes {
-                Some(bytes) => {
-                    if let Some(value) = self.iterable_map.get_inner(&bytes) {
-                        self.idx += 1;
-                        return Some(value);
+            if self.idx >= self.len {
+                // keys that are newly inserted
+                if let Some(bytes) = self.extends.get(self.ext_idx) {
+                    return match self.iterable_map.write_set.get(bytes) {
+                        Some(UpdateOperation::Insert(value, _)) => {
+                            self.ext_idx += 1;
+                            Some(value.clone())
+                        },
+                        _=> None
                     }
-                },
-                None => {},
+                }
+                return None;
+            } else {
+                // keys that can be found in world state
+                let ws_index_key = self.iterable_map.wskey_index_key(self.level, &(self.idx as u32));
+                match Vec::<u8>::load(ws_index_key) {
+                    Some(bytes) => {
+                        if let Some((value, _)) = self.iterable_map.get_inner(&bytes) {
+                            self.idx += 1;
+                            return Some(value);
+                        }
+                    },
+                    None => {},
+                }
             }
             self.idx += 1;
         }
@@ -522,7 +560,9 @@ pub struct IterableMapValuesMut<'a, K, V>
     iterable_map: &'a mut IterableMap<K, V>,
     idx: usize,
     level: u32,
-    len: u32
+    len: usize,
+    ext_idx: usize,
+    extends: Vec<Vec<u8>>
 }
 
 impl<'a, K, V> Iterator for IterableMapValuesMut<'a, K, V> 
@@ -532,23 +572,36 @@ impl<'a, K, V> Iterator for IterableMapValuesMut<'a, K, V>
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if self.idx >= self.len as usize {
-                return None
-            }
-
-            let ws_index_key = self.iterable_map.wskey_index_key(self.level, &(self.idx as u32));
-            let key_bytes = Vec::<u8>::load(ws_index_key);
-            match key_bytes {
-                Some(bytes) => {
-                    if let Some(mut_value) = self.iterable_map.get_mut_inner(&bytes) {
-                        self.idx += 1;
-                        return Some(unsafe{
-                            let r = mut_value as * const V;
-                            &mut *(r as *mut V)
-                        });
+            if self.idx >= self.len {
+                // keys that are newly inserted
+                if let Some(bytes) = self.extends.get(self.ext_idx) {
+                    return match self.iterable_map.write_set.get_mut(bytes) {
+                        Some(UpdateOperation::Insert(mut_value, _)) => {
+                            self.ext_idx += 1;
+                            Some(unsafe{
+                                let r = mut_value as * const V;
+                                &mut *(r as *mut V)
+                            })
+                        },
+                        _ => None
+                    };
+                };
+                return None;
+            } else {
+                // keys that can be found in world state
+                let ws_index_key = self.iterable_map.wskey_index_key(self.level, &(self.idx as u32));
+                match Vec::<u8>::load(ws_index_key) {
+                    Some(bytes) => {
+                        if let Some(mut_value) = self.iterable_map.get_mut_inner(&bytes) {
+                            self.idx += 1;
+                            return Some(unsafe{
+                                let r = mut_value as * const V;
+                                &mut *(r as *mut V)
+                            });
+                        }
                     }
+                    None => {}
                 }
-                None => {}
             }
             self.idx += 1;
         }

@@ -1,6 +1,6 @@
 [package]
 name = "pchain-sdk"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["ParallelChain Lab <info@parallelchain.io>"]
 edition = "2021"
 description = "The ParallelChain F Smart Contract Development Kit (SDK)."

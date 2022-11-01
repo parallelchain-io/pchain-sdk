@@ -74,7 +74,7 @@ pub use pchain_sdk_macros::{
 };
 
 use borsh::BorshDeserialize;
-use pchain_types::Serializable;
+use pchain_types::{Serializable, Event};
 
 /// `return_value` places `value` in the receipt of an `ExternalToContract` transaction.
 /// This method is not required when `contract_init` macro is being used on the actions()
@@ -88,11 +88,11 @@ pub fn return_value(value: Vec<u8>) {
 }
 
 pub fn emit_event(topic: &[u8], value: &[u8]) {
-    let event = pchain_types::transaction::Event{ 
+    let event = Event{ 
         topic: topic.to_vec(), 
         value: value.to_vec()
     };
-    let serialized_event = pchain_types::transaction::Event::serialize(&event);
+    let serialized_event = Event::serialize(&event);
 
     let event_ptr= serialized_event.as_ptr();
     let event_len = serialized_event.len() as u32;
