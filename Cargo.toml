@@ -1,6 +1,6 @@
 [package]
 name = "pchain-sdk"
-version = "0.3.2"
+version = "0.4.2"
 authors = ["ParallelChain Lab <info@parallelchain.io>"]
 edition = "2021"
 description = "The ParallelChain F Smart Contract Development Kit (SDK)."
@@ -12,6 +12,6 @@ repository = "https://github.com/parallelchain-io/parallelchain-sdk"
 doctest = false
 
 [dependencies]
-borsh = "0.9"
-pchain-types = "0.3"
-pchain-sdk-macros = "0.3"
+borsh = "=0.10.2"
+pchain-types = "=0.4.3"
+pchain-sdk-macros = { path = "macros", version = "0.4" }

@@ -1,22 +1,30 @@
 /*
- Copyright 2022 ParallelChain Lab
+    Copyright © 2023, ParallelChain Lab 
+    Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
+*/
 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
- */
+//! fastmap defines data structure represening Map in contract and data could be gas-efficiently 
+//! load from or save to world state lazily. It behaves as map that supports `get`, `insert`, `remove`, etc.
+//! 
+//! ### Storage Model
+//! 
+//! World State Key Format:
+//! 
+//! |Component|WS Key|WS Value (Data type) |
+//! |:---|:---|:---|
+//! |Key-Value|P, E, K| CellContext |
+//! 
+//! - P: parent key
+//! - E: little endian bytes of edition number (u32)
+//! - K: user defined key
+//! 
+//! In world state, the key format is `parent key` + `edition` (u32, 4 bytes) + `user defined key`. If nested FastMap is 
+//! inserted to FastMap as a value, `parent key` would be the key of the FastMap being inserted. Actual value to be stored
+//! into world state is borsh-serialized structure of `Cell` which is either a value (bytes) or information of nested map.
 
 use std::{marker::PhantomData, collections::BTreeMap};
 use borsh::{BorshSerialize, BorshDeserialize};
-use crate::{storage::{self}, Storage};
+use crate::{storage::{self}, Storable, StoragePath};
 
 /// `FastMap` is a contract-level data structure to provide abstraction by utilizing Get and Set operations associated with Contract Storage.
 /// It supports lazy read/write to get gas consumption to be efficient, consistent and predictable.
@@ -40,7 +48,7 @@ impl<K, V> FastMap<K, V>
     /// self.fast_map.insert(&"fast_map".to_string(), fast_map);
     /// ```
     pub fn new() -> Self {
-        Self { parent_key: vec![], write_set: BTreeMap::default(), _marker: PhantomData::default() }
+        Self { parent_key: vec![], write_set: BTreeMap::default(), _marker: PhantomData }
     }
 
     /// Get data either from cached value or world state.
@@ -48,10 +56,10 @@ impl<K, V> FastMap<K, V>
     /// ```no_run
     /// match self.fast_map.get(key) {
     ///    Some(value) => {
-    ///        println!("value = {}", value);
+    ///        log("GET".as_bytes(), format!("value = {}", value).as_bytes());
     ///    },
     ///    None => {
-    ///        println!("key not found");
+    ///        log("GET".as_bytes(), "key not found".as_bytes());
     ///    }
     /// }
     /// ```
@@ -188,35 +196,31 @@ impl<K, V> BorshSerialize for FastMap<K, V>
 impl<K, V> BorshDeserialize for FastMap<K, V>
     where K: BorshSerialize, 
           V: Insertable {
-    fn deserialize(buf: &mut &[u8]) -> std::io::Result<Self> {
-        match Vec::<u8>::deserialize(buf) {
-            Ok(bytes) => {
-                Ok(Self{
-                    parent_key: bytes,
-                    write_set: BTreeMap::default(),
-                    _marker: PhantomData::default(),
-                })
-            },
-            Err(e) => Err(e),
-        }
+    fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let parent_key = Vec::<u8>::deserialize_reader(reader)?;
+        Ok(Self{
+            parent_key,
+            write_set: BTreeMap::default(),
+            _marker: PhantomData,
+        })
     }
 }
 
-impl<K, V> Storage for FastMap<K, V> 
+impl<K, V> Storable for FastMap<K, V> 
     where K: BorshSerialize, 
           V: Insertable {
     
     /// This method is called at the beginning of contract execution, if this `FastMap` is a field of the Contract Struct.
-    fn __load_storage(field :&crate::StorageField) -> Self {
+    fn __load_storage(field: &StoragePath) -> Self {
         Self {
             parent_key: field.get_path().to_vec(),
             write_set: BTreeMap::default(),
-            _marker: PhantomData::default(),
+            _marker: PhantomData,
         }
     }
 
     /// This method is called at the end of contract execution, if this `FastMap` is a field of the Contract Struct.
-    fn __save_storage(&mut self, field :&crate::StorageField) {
+    fn __save_storage(&mut self, field: &StoragePath) {
         self.save(field.get_path().to_vec(), false);
     }
 }
@@ -242,66 +246,32 @@ struct Cell {
 /// `Insertable` defines default IO implementation between data types and world state.
 pub trait Insertable : BorshSerialize + BorshDeserialize {
     fn edition(key: &Vec<u8>) -> u32 {
-        match storage::get(key) {
-            Some(bytes) => {
-                match Cell::deserialize(&mut bytes.as_slice()) {
-                    Ok(c) => c.edition,
-                    Err(_) => 0,
-                }
-            },
-            None => 0
-        }
+        storage::get(key).map_or(0, |bytes|{
+            Cell::deserialize(&mut bytes.as_slice()).map_or(0, |c| c.edition)
+        })
     }
 
     fn load(key: Vec<u8>) -> Option<Self> {
-        match storage::get(&key) {
-            Some(bytes) => {
-                match Cell::deserialize(&mut bytes.as_slice()) {
-                    Ok(c) => {
-                        match c.data {
-                            Some(data) => {
-                                match Self::deserialize(&mut data.as_slice()) {
-                                    Ok(ret) => Some(ret),
-                                    Err(_) => None // cannot deserialize. Should not happen.
-                                }
-                            },
-                            // data is deleted
-                            None => None
-                        }                
-                    },
-                    // fail to serialize
-                    Err(_) => None
-                }
-            },
-            // cannot find in world state
-            None => None            
-        }
+        let bytes = storage::get(&key)?;
+        let c =  Cell::deserialize(&mut bytes.as_slice()).map_or(None, |c| Some(c))?;
+        let data = c.data?;
+        Self::deserialize(&mut data.as_slice()).map_or(None, |s| Some(s))
     }
 
     fn save(&mut self, key: Vec<u8>, is_new: bool) {
-        let edition = match storage::get(&key) {
-            Some(bytes) => {
-                match Cell::deserialize(&mut bytes.as_slice()) {
-                    Ok(c) => c.edition + if is_new { 1 } else { 0 },
-                    Err(_) => 0,
-                }
-            },
-            None => 0
-        };
+        let edition = storage::get(&key).map_or(0, |bytes| {
+            Cell::deserialize(&mut bytes.as_slice()).map_or(0, |c| 
+                c.edition + if is_new { 1 } else { 0 }
+            )
+        });
         let c = Cell { edition, data: Some(self.try_to_vec().unwrap()) };
         storage::set(&key, c.try_to_vec().unwrap().as_slice());
     }
 
     fn delete(key: Vec<u8>) {
-        let edition = match storage::get(&key) {
-            Some(bytes) => {
-                match Cell::deserialize(&mut bytes.as_slice()) {
-                    Ok(c) => c.edition + 1,
-                    Err(_) => 0,
-                }
-            },
-            None => 0
-        };
+        let edition = storage::get(&key).map_or(0, |bytes| {
+            Cell::deserialize(&mut bytes.as_slice()).map_or(0, |c| c.edition + 1)
+        });
         let c = Cell { edition, data: None };
         storage::set(&key, c.try_to_vec().unwrap().as_slice());
     }
@@ -320,7 +290,8 @@ macro_rules! define_primitives {
 define_primitives!(
     u8, u16, u32, u64, u128,
     i8, i16, i32, i64, i128,
-    String, bool, usize
+    String, bool, usize,
+    [u8;32]
 );
 impl<T> Insertable for Option<T> where T: BorshSerialize + BorshDeserialize {}
 impl<T> Insertable for Vec<T> where T: BorshSerialize + BorshDeserialize {}

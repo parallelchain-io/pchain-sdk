@@ -1,33 +1,20 @@
 /*
- Copyright 2022 ParallelChain Lab
-
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
- */
+    Copyright © 2023, ParallelChain Lab 
+    Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
+*/
 
 extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{ItemStruct, ItemImpl, NestedMeta, ItemTrait, ImplItemMethod};
+use syn::{ItemStruct, ItemImpl, NestedMeta, ItemTrait};
 
 
 mod core_impl;
 use self::core_impl::*;
 
 
-/// 
-/// Please note that `contract` cannot be used with `contract_init`
-/// 
-/// Examples are available at `smart_contract/examples`
+/// `contract` defines basic struct as a programming model of a contract. 
+/// Fields are data representation of contract storage.
 /// 
 /// # Basic example 
 /// Define fields in struct as contract storage. Define methods in impl as entrypoints
@@ -36,25 +23,6 @@ use self::core_impl::*;
 /// #[contract]
 /// struct MyContract {
 ///   data :i32
-/// }
-/// 
-/// #[contract]
-/// impl MyContract {
-///   pub fn callable_function_a() {
-///     ...
-///   }
-///   pub fn callable_function_b(input :i32) -> String {
-///     ...
-///   }
-/// }
-/// ```
-/// # Example
-/// Add attribute "meta" for exposing available entrypoints of the contract.
-/// 
-/// ```no_run
-/// #[contract_methods(meta)]
-/// impl MyContract{
-///     ...
 /// }
 /// ```
 #[proc_macro_attribute]
@@ -66,14 +34,30 @@ pub fn contract(_attr_args: TokenStream, input: TokenStream) -> TokenStream {
     generate_compilation_error("ERROR:  contract macro can only be applied to smart contract Struct to read/write into world state".to_string())
   }
 }
+
+/// `contract_methods` defines impl for the contract struct. 
+/// Methods declared in the impl are callable by Transaction Command Call if their visibility is `pub`.
+/// 
+/// # Basic example
+/// Define contract methods which can be invoked by Transaction Command Call.
+/// 
+/// ```no_run
+/// #[contract_methods]
+/// impl MyContract {
+///   pub fn callable_function_a() {
+///     // ...
+///   }
+///   pub fn callable_function_b(input :i32) -> String {
+///     // ...
+///   }
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn contract_methods(_attr_args: TokenStream, input: TokenStream) -> TokenStream {
-  if let Ok(mut ipl) = syn::parse::<ItemImpl>(input.clone()) {
-    let attr_args_string = _attr_args.to_string();
-    let attributes = attr_args_string.split(",").collect::<Vec<&str>>();
-    generate_contract_impl(&mut ipl, attributes.contains(&"meta"))
+  if let Ok(mut ipl) = syn::parse::<ItemImpl>(input) {
+    generate_contract_impl(&mut ipl)
   } else {
-    generate_compilation_error("ERROR: contract_methods macro can only be applied to smart contract implStruct/implTrait to generate actions(), views(), init() entrypoints.".to_string())
+    generate_compilation_error("ERROR: contract_methods macro can only be applied to smart contract implStruct/implTrait.".to_string())
   }
 }
 
@@ -98,7 +82,7 @@ pub fn contract_methods(_attr_args: TokenStream, input: TokenStream) -> TokenStr
 /// 
 /// // .. MyContract struct definition .. //
 /// 
-/// #[contract]
+/// #[contract_methods]
 /// impl MyContract {
 ///   pub fn callable_function_a() {
 ///     let gas: u64 = 100;
@@ -129,7 +113,7 @@ pub fn contract_methods(_attr_args: TokenStream, input: TokenStream) -> TokenStr
 /// pub mod external_call;
 /// use external_call::my_contract;
 ///
-/// #[contract]
+/// #[contract_methods]
 /// impl MyContract {
 ///   pub fn callable_function_a() {
 ///     ...
@@ -145,7 +129,7 @@ pub fn use_contract(attr_args: TokenStream, input: TokenStream) -> TokenStream {
   let attr_args = syn::parse_macro_input!(attr_args as syn::AttributeArgs);
   if attr_args.len() < 1 || attr_args.len() > 2 {
     return generate_compilation_error("At least one argument is required. Expect first argument to be a contract address. Second argument (Optional) to be 'action' or 'view'.".to_string());
-  }
+  };
 
   match syn::parse::<ItemTrait>(input) {
     Ok(it) => {
@@ -157,23 +141,7 @@ pub fn use_contract(attr_args: TokenStream, input: TokenStream) -> TokenStream {
               return generate_compilation_error("Only &str are allowed as first argument to use_contract".to_string())
             },
       };
-      // `attr_args[1]` (optional) determines whether this trait contains action methods or view methods. 
-      // By default (not specifying it), trait contains action methods.
-      let method_type = if attr_args.len()==1 { UseContractMethodType::Action } // default action methods
-      else {
-        match &attr_args[1] {
-          NestedMeta::Meta(meta) => {
-            match meta.path().get_ident().unwrap().to_string().as_str() {
-              "action" => UseContractMethodType::Action,
-              "view" => UseContractMethodType::View,
-              _=> return generate_compilation_error("The second argument should be either action or view.".to_string())
-            }
-          }
-          _ => return generate_compilation_error("The second argument is not recognised.".to_string())
-        }
-      };
-
-      generate_external_contract_mod(it, contract_address, method_type)
+      generate_external_contract_mod(it, contract_address)
     },
     Err(_) => {
       generate_compilation_error("use_contract can only be applied to trait definitions.".to_string())
@@ -217,48 +185,15 @@ pub fn contract_field(_attr_args: TokenStream, input: TokenStream) -> TokenStrea
   }
 }
 
-/// `view` macro applies to impl methods for read-only contract call. The below operations will take no effect after execution
-/// 
-/// - set data to storage
-/// - emit events
-/// - cross-contract call
-/// - internal transaction
-///  
-/// ### Example
-/// ```no_run
-/// #[view]
-/// pub fn view_method(d1: i32) -> String { ..
-/// ```
-#[proc_macro_attribute]
-pub fn view(_attr_args: TokenStream, input: TokenStream) -> TokenStream {
-  match syn::parse::<ImplItemMethod>(input.clone()) {
-    Ok(_) => {input},
-    _=> generate_compilation_error("view can only be applied to impl methods.".to_string())
-  }
-}
-
-/// `action` macro applies to impl methods for mutable contract call.
+/// `call` macro applies to impl methods for contract method call.
 /// 
 /// ### Example
 /// ```no_run
-/// #[action]
-/// pub fn action_method(d1: i32) -> String{ ..
+/// #[call]
+/// fn action_method(d1: i32) -> String{ ..
 /// ```
 #[proc_macro_attribute]
-pub fn action(_attr_args: TokenStream, input: TokenStream) -> TokenStream {
-  // it does nothing. The macro contract will handle this attribure.
-  input
-}
-
-/// `init` macro applies to impl methods for init entrypoint
-/// 
-/// ### Example
-/// ```no_run
-/// #[init]
-/// pub fn init_method(d1: i32) -> String { ..
-/// ```
-#[proc_macro_attribute]
-pub fn init(_attr_args: TokenStream, input: TokenStream) -> TokenStream {
+pub fn call(_attr_args: TokenStream, input: TokenStream) -> TokenStream {
   // it does nothing. The macro contract will handle this attribure.
   input
 }

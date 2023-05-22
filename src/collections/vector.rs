@@ -1,18 +1,22 @@
 /*
- Copyright 2022 ParallelChain Lab
+    Copyright © 2023, ParallelChain Lab 
+    Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
+*/
 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
- */
+//! vector defines data structure representing Vector in contract and data could be gas-efficiently 
+//! load from or save to world state lazily. It behaves as `Vec` that supports `push`, `pop`, `iter`, 
+//! indexing, etc.
+//! 
+//! ### Storage Model
+//! 
+//! World State Key Format:
+//! 
+//! |Component|WS Key|WS Value (Data type) |
+//! |:---|:---|:---|
+//! |Length|P, 0| u32 |
+//! |Element|P, 1, I| user defined data (borsh-serialized)|
+//! - P: parent key
+//! - I: little endian bytes of index (u32)
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -21,12 +25,12 @@ use std::ops::IndexMut;
 use borsh::{BorshSerialize, BorshDeserialize};
 
 use crate::storage;
-use crate::{Storage, StorageField};
+use crate::{Storable, StoragePath};
 
 /// `Vector` is a contract-level data structure to provide abstraction by utilizing Get and Set operations associated with Contract Storage.
 /// It supports lazy read/write to get gas consumption to be efficient, consistent and predictable.
 #[derive(Clone, Default)]
-pub struct Vector<T> where T: Storage {
+pub struct Vector<T> where T: Storable {
     write_set: RefCell<BTreeMap<usize, T>>,
     read_set: RefCell<BTreeMap<usize, T>>,
     /// runtime length of the vector
@@ -36,18 +40,18 @@ pub struct Vector<T> where T: Storage {
 }
 
 /// `VectorIter` is Iterator created by `Vector::iter()`
-pub struct VectorIter<'a, T> where T: Storage + Clone {
+pub struct VectorIter<'a, T> where T: Storable + Clone {
     vector: &'a Vector<T>,
     idx: usize,
 }
 
 /// `VectorIter` is mutable Iterator created by `Vector::iter_mut()`
-pub struct VectorIterMut<'a, T> where T: Storage + Clone {
+pub struct VectorIterMut<'a, T> where T: Storable + Clone {
     vector: &'a mut Vector<T>,
     idx: usize,
 }
 
-impl<'a, T> Vector<T> where T: Storage + Clone {
+impl<'a, T> Vector<T> where T: Storable + Clone {
     pub fn new() -> Self {
         Self {
             write_set: RefCell::new(BTreeMap::new()),
@@ -105,8 +109,8 @@ impl<'a, T> Vector<T> where T: Storage + Clone {
         // parent key absent, cannot query world state data
         if self.parent_key.is_empty() { panic!() }
 
-        // if not in read set,  read from world state
-        let value = T::__load_storage(&StorageField::new().append(Self::wskey_index(self.parent_key.clone(), idx)));
+        // if not in read set, read from storage
+        let value = T::__load_storage(&StoragePath::new().append(Self::wskey_index(self.parent_key.clone(), idx)));
 
         // cache to read set and return reference of it
         self.write_to_read_set(idx, value)
@@ -154,15 +158,9 @@ impl<'a, T> Vector<T> where T: Storage + Clone {
 
     /// The length of the vector, which is the data stored in world state.
     fn len_in_ws(parent_key: Vec<u8>) -> usize {
-        match storage::get(Self::wskey_len(parent_key).as_slice()) {
-            Some(bytes) => {
-                match usize::deserialize(&mut bytes.as_slice()) {
-                    Ok(len) => len,
-                    Err(_) => 0,
-                }
-            }
-            None => 0
-        }
+        storage::get(Self::wskey_len(parent_key).as_slice()).map_or(0, |bytes|{
+            usize::deserialize(&mut bytes.as_slice()).map_or(0, std::convert::identity)
+        })
     }
 
     /// World State Key for saving the length of vector.
@@ -183,7 +181,7 @@ impl<'a, T> Vector<T> where T: Storage + Clone {
     }
 }
 
-impl<'a, T> Iterator for VectorIter<'a, T> where T: Storage + Clone {
+impl<'a, T> Iterator for VectorIter<'a, T> where T: Storable + Clone {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -196,7 +194,7 @@ impl<'a, T> Iterator for VectorIter<'a, T> where T: Storage + Clone {
     }
 }
 
-impl<'a, T> Iterator for VectorIterMut<'a, T> where T: Storage + Clone {
+impl<'a, T> Iterator for VectorIterMut<'a, T> where T: Storable + Clone {
     type Item = &'a mut T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -213,7 +211,7 @@ impl<'a, T> Iterator for VectorIterMut<'a, T> where T: Storage + Clone {
     }
 }
 
-impl<T> Index<usize> for Vector<T> where T: Storage + Clone {
+impl<T> Index<usize> for Vector<T> where T: Storable + Clone {
     type Output = T;
 
     fn index(&self, index: usize) -> &Self::Output {
@@ -221,7 +219,7 @@ impl<T> Index<usize> for Vector<T> where T: Storage + Clone {
     }
 }
 
-impl<T> IndexMut<usize> for Vector<T> where T: Storage + Clone {
+impl<T> IndexMut<usize> for Vector<T> where T: Storable + Clone {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         let value = self.get(index);
         // return reference to write set
@@ -229,8 +227,8 @@ impl<T> IndexMut<usize> for Vector<T> where T: Storage + Clone {
     }
 }
 
-impl<T> Storage for Vector<T> where T: Storage + Clone {
-    fn __load_storage(field :&StorageField) -> Self {
+impl<T> Storable for Vector<T> where T: Storable + Clone {
+    fn __load_storage(field: &StoragePath) -> Self {
         let parent_key = field.get_path().to_vec();
         Self {
             write_set: RefCell::new(BTreeMap::new()),
@@ -240,7 +238,7 @@ impl<T> Storage for Vector<T> where T: Storage + Clone {
         }
     }
 
-    fn __save_storage(&mut self, field :&StorageField) {
+    fn __save_storage(&mut self, field :&StoragePath) {
         let field_path = field.get_path().to_vec();
         // set parent key here for the cases that Vector is instantiated first and then assigned to field in contract struct
         if self.parent_key != field_path {
@@ -255,7 +253,7 @@ impl<T> Storage for Vector<T> where T: Storage + Clone {
         // save changes to world state
         let mut write_set = self.write_set.borrow_mut();
         write_set.iter_mut().for_each(|(idx, v)|{
-            v.__save_storage(&StorageField::new().append(Self::wskey_index(self.parent_key.clone(), *idx)));
+            v.__save_storage(&StoragePath::new().append(Self::wskey_index(self.parent_key.clone(), *idx)));
         });
     }
 }

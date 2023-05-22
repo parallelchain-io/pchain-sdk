@@ -1,22 +1,32 @@
 /*
- Copyright 2022 ParallelChain Lab
+    Copyright © 2023, ParallelChain Lab 
+    Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
+*/
 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
- */
+//! iterablemap defines data structure representing Map in contract and data could be gas-efficiently 
+//! load from or save to world state lazily.It behaves as map that supports `get`, `insert`, `remove` and
+//! iteration on keys or values.
+//! 
+//! 
+//! ### Storage Model
+//! 
+//! World State Key Format:
+//! 
+//! |Component|WS Key|WS Value (Data type) |
+//! |:---|:---|:---|
+//! |Map Info|P, 0|\<MapInfoCell\>|
+//! |Key-Index|P, 1, L, K|\<KeyIndexCell\>|
+//! |Index-Key|P, 2, L, I|\<ValueCell\> (data: K)|
+//! |Index-Value|P, 3, L, I|\<ValueCell\>|
+//! 
+//! - P: parent key
+//! - L: map level
+//! - I: little endian bytes of index (u32)
+//! - K: user defined key
 
 use std::{marker::PhantomData, collections::BTreeMap};
 use borsh::{BorshDeserialize, BorshSerialize};
-use crate::{storage::{self}, Storage};
+use crate::{storage::{self}, Storable, StoragePath};
 
 /// `IterableMap` is a contract-level data structure to provide abstraction by utilizing Get and Set operations associated with Contract Storage.
 /// It supports lazy read/write to get gas consumption to be efficient, consistent and predictable.
@@ -44,38 +54,29 @@ impl<K, V> IterableMap<K, V>
         Self { parent_key: vec![], write_set: BTreeMap::default(), _marker: PhantomData::default() }
     }
 
-     /// Get data either from cached value or world state.
-     /// ### Example
-     /// ```no_run
-     /// match self.get(key) {
-     ///    Some(value) => {
-     ///        println!("value = {}", value);
-     ///    },
-     ///    None => {
-     ///        println!("key not found");
-     ///    }
-     /// }
-     /// ```
-     pub fn get(&self, key: &K) -> Option<V> {
+    /// Get data either from cached value or world state.
+    /// ### Example
+    /// ```no_run
+    /// match self.get(key) {
+    ///    Some(value) => {
+    ///        log("GET".as_bytes(), format!("value = {}", value).as_bytes());
+    ///    },
+    ///    None => {
+    ///        log("GET".as_bytes(), "key not found".as_bytes());
+    ///    }
+    /// }
+    /// ```
+    pub fn get(&self, key: &K) -> Option<V> {
         let key_bs = key.try_to_vec().unwrap();
-        match self.get_inner(&key_bs) {
-            Some((v, _)) => Some(v),
-            None => None,
-        }
+        self.get_inner(&key_bs).map(|(v, _)| v)
     }
 
     fn get_inner(&self, key_bs: &Vec<u8>) -> Option<(V, bool)> {
         // search the cache with last update related to this key
         match self.write_set.get(key_bs) {
             Some(UpdateOperation::Delete) => { None }, // deleted key in cache
-            Some(UpdateOperation::Insert(value, is_new_record)) => { Some((value.clone(), is_new_record.clone())) }, // found key in cache
-            None=> {
-                // get from world-state
-                match self.get_from_ws_by_key(&key_bs) {
-                    Some(value) => Some((value, false)),
-                    None => None
-                } 
-            } 
+            Some(UpdateOperation::Insert(value, is_new_record)) => { Some((value.clone(), *is_new_record)) }, // found key in cache
+            None=> { self.get_from_ws_by_key(&key_bs).map(|v| (v, false)) } // get from world-state
         }
     }
 
@@ -131,7 +132,7 @@ impl<K, V> IterableMap<K, V>
     /// Remove key from `IterableMap`.
     pub fn remove(&mut self, key: &K) {
         let key_bs = key.try_to_vec().unwrap();
-        self.write_set.insert(key_bs.clone(), UpdateOperation::Delete);
+        self.write_set.insert(key_bs, UpdateOperation::Delete);
     }
 
     /// clear the map. It performs actual Write to world state.
@@ -215,10 +216,7 @@ impl<K, V> IterableMap<K, V>
     /// Returns None if key is not found in Key-Index
     fn get_index(&self, key: &Vec<u8> , level: u32) -> Option<u32> {
         let ws_key_index = self.wskey_key_index(key, level);
-        match KeyIndexCell::load(ws_key_index) {
-            Some(ki) => Some(ki.index),
-            None => None
-        }
+        KeyIndexCell::load(ws_key_index).map(|ki| ki.index)
     }
 
     /// Get Value, given user-defined key.
@@ -419,21 +417,21 @@ impl<K, V> Iterable for IterableMap<K, V>
     }
 }
 
-impl<K, V> Storage for IterableMap<K, V> 
+impl<K, V> Storable for IterableMap<K, V> 
     where K: BorshSerialize + BorshDeserialize,
           V: Iterable + Clone {
     
     /// This method is called at the beginning of contract execution, if this `IterableMap` is a field of the Contract Struct.
-    fn __load_storage(field :&crate::StorageField) -> Self {
+    fn __load_storage(field: &StoragePath) -> Self {
         Self {
             parent_key: field.get_path().to_vec(),
             write_set: BTreeMap::default(),
-            _marker: PhantomData::default(),
+            _marker: PhantomData,
         }
     }
 
     /// This method is called at the end of contract execution, if this `IterableMap` is a field of the Contract Struct.
-    fn __save_storage(&mut self, field :&crate::StorageField) {
+    fn __save_storage(&mut self, field: &StoragePath) {
         self.save(field.get_path().to_vec());
     }
 }
@@ -450,17 +448,13 @@ impl<K, V> BorshSerialize for IterableMap<K, V>
 impl<K, V> BorshDeserialize for IterableMap<K, V>
     where K: BorshSerialize + BorshDeserialize,
           V: Iterable + Clone {
-    fn deserialize(buf: &mut &[u8]) -> std::io::Result<Self> {
-        match Vec::<u8>::deserialize(buf) {
-            Ok(bytes) => {
-                Ok(Self{
-                    parent_key: bytes,
-                    write_set: BTreeMap::default(),
-                    _marker: PhantomData::default(),
-                })
-            },
-            Err(e) => Err(e),
-        }
+    fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let parent_key = Vec::<u8>::deserialize_reader(reader)?;
+        Ok(Self{
+            parent_key,
+            write_set: BTreeMap::default(),
+            _marker: PhantomData,
+        })
     }
 }
 
@@ -491,7 +485,7 @@ impl<'a, K, V> Iterator for IterableMapKeys<'a, K, V>
                 return None
             } else {
                 let ws_index_key = self.iterable_map.wskey_index_key(self.level, &(self.idx as u32));
-                match Vec::<u8>::load(ws_index_key.clone()) {
+                match Vec::<u8>::load(ws_index_key) {
                     Some(bytes) => {
                         self.idx += 1;
                         return Some(K::deserialize(&mut bytes.as_slice()).unwrap())
@@ -612,40 +606,16 @@ impl<'a, K, V> Iterator for IterableMapValuesMut<'a, K, V>
 /// Actual data stored to world state is in format of `ValueCell`.
 pub trait Iterable : BorshSerialize + BorshDeserialize {
     fn is_map(key: Vec<u8>) -> bool {
-        match storage::get(&key) {
-            Some(bytes) => {
-                match ValueCell::deserialize(&mut bytes.as_slice()) {
-                    Ok(c) => c.is_map,
-                    Err(_) => false
-                }
-            },
-            None => false,
-        }
+        storage::get(&key).map_or(false, |bytes|{
+            ValueCell::deserialize(&mut bytes.as_slice()).map_or(false, |c| c.is_map)
+        })
     }
     
     fn load(key: Vec<u8>) -> Option<Self> {
-        match storage::get(&key) {
-            Some(bytes) => {
-                match ValueCell::deserialize(&mut bytes.as_slice()) {
-                    Ok(c) => {
-                        match c.data {
-                            Some(data) => {
-                                match Self::deserialize(&mut data.as_slice()) {
-                                    Ok(ret) => Some(ret),
-                                    Err(_) => unreachable!()
-                                }
-                            },
-                            // data is deleted
-                            None => None
-                        }
-                    },
-                    // fail to deserialize ValueCell
-                    Err(_) => None
-                }
-            },
-            // cannot find in world state
-            None => None
-        }
+        let bytes = storage::get(&key)?;
+        let c = ValueCell::deserialize(&mut bytes.as_slice()).map_or(None, |c| Some(c))?;
+        let data = c.data?;
+        Self::deserialize(&mut data.as_slice()).map_or(None, |s| Some(s))
     }
 
     fn save(&mut self, key: Vec<u8>) {
@@ -710,15 +680,8 @@ struct KeyIndexCell {
 
 impl Iterable for KeyIndexCell {
     fn load(key: Vec<u8>) -> Option<Self> {
-        match storage::get(&key) {
-            Some(bytes) => {
-                match KeyIndexCell::deserialize(&mut bytes.as_slice()) {
-                    Ok(c) => Some(c),
-                    Err(_) => None
-                }
-            },
-            None => None,
-        }
+        let bytes = storage::get(&key)?;
+        KeyIndexCell::deserialize(&mut bytes.as_slice()).map_or(None, |c| Some(c))
     }
     fn save(&mut self, key: Vec<u8>) { storage::set(&key, self.try_to_vec().unwrap().as_slice()) }
     fn delete(_key: Vec<u8>) { unreachable!() }
@@ -736,7 +699,8 @@ macro_rules! define_primitives {
 define_primitives!(
     u8, u16, u32, u64, u128,
     i8, i16, i32, i64, i128,
-    String, bool, usize
+    String, bool, usize,
+    [u8;32]
 );
 impl<T> Iterable for Option<T> where T: BorshSerialize + BorshDeserialize {}
 impl<T> Iterable for Vec<T> where T: BorshSerialize + BorshDeserialize {}

@@ -51,18 +51,6 @@ self.vector.iter_mut().for_each(|item|{
 });
 ```
 
-### Storage Model
-
-World State Key Format:
-
-|Component|WS Key|WS Value (Data type) |
-|:---|:---|:---|
-|Length|P, 0| u32 |
-|Element|P, 1, I| user defined data (borsh-serialized)|
-
-- P: parent key
-- I: little endian bytes of index (u32)
-
 ### Lazy Write
 
 Trait `Storage` implements the `Vector` so that data can be saved to world state
@@ -93,44 +81,12 @@ pub fn insert(&mut self, key: &K, value: &V) -> Option<&mut Insertable>
 pub fn remove(&mut self, key: &K)
 ```
 
-### Storage Model
-
-World State Key Format:
-
-|Component|WS Key|WS Value (Data type) |
-|:---|:---|:---|
-|Key-Value|P, E, K| CellContext |
-
-- P: parent key
-- E: little endian bytes of edition number (u32)
-- K: user defined key
-
-In world state, the key format is `parent key` + `edition` (u32, 4 bytes) + `user defined key`. If nested FastMap is inserted to FastMap as a value, `parent key` would be the key of the FastMap being inserted.
-
-Actual value to be stored into world state is borsh-serialized structure of `Cell` which is either a value (bytes) or information of nested map.
-
-```rust
-/// Basic data representation of the format of value being stored in world state.
-struct Cell {
-    /// edition of this slot.
-    edition: u32,
-    /// The content is serialized from the value, which depends on implementation of 
-    /// different data types in collections. None if data is deleted. 
-    data: Option<Vec<u8>>
-}
-```
-
-In delete operation, data will be stored as `None` in world state (as a tombstone).
-
-The field `edition` in `Cell` is to indicate the version of data representation. This number will be increased whenever the data is being updated. It is useful to provide consistency to the Map because __child elements will not be deleted even if the map is tombstoned__. 
-
 ### Lazy Write
 
 Trait `Storage` implements the `FastMap` so that data can be saved to world state
 
 1. after execution of action method with receiver `&mut self`; or
 1. explicitly calling the setter `Self::set()`.
-
 
 
 ## IterableMap
@@ -157,90 +113,9 @@ pub fn values_mut(&mut self) -> IterableMapIntoMutValue
 pub fn clear(&mut self)
 ```
 
-### Storage Model
-
-World State Key Format:
-
-|Component|WS Key|WS Value (Data type) |
-|:---|:---|:---|
-|Map Info|P, 0|\<MapInfoCell\>|
-|Key-Index|P, 1, L, K|\<KeyIndexCell\>|
-|Index-Key|P, 2, L, I|\<ValueCell\> (data: K)|
-|Index-Value|P, 3, L, I|\<ValueCell\>|
-
-- P: parent key
-- L: map level
-- I: little endian bytes of index (u32)
-- K: user defined key
-
-The structures `MapInfoCell`, `KeyIndexCell` and `ValueCell` are borsh-serializable.
-
-```rust
-struct MapInfoCell {
-    /// level defines the level of the map by being part of the key of child of this map.
-    /// It is part of prefix of the key to child element.
-    level: u32,
-    /// sequence is an increasing pointer to index of new inserted item.
-    /// It is part of prefix of the key to child element.
-    sequence: u32
-}
-
-struct KeyIndexCell {
-    // index of Key-Index mapping. It is part of prefix of the key to child element.
-    index: u32
-}
-
-struct ValueCell {
-    /// indicator of whether the value being stored is a map (nested map)
-    is_map: bool,
-    /// The content is serialized from the value, which depends on implementation of 
-    /// different data types in collections. None if data is deleted. 
-    data: Option<Vec<u8>>
-}
-```
-
-In delete operation, `None` will be stored to Index-Key and Index-Value in world state (as a tombstone).
-
-The Sequence in Map Info keeps track of the count of insertion. It does not decrease in delete operation. But in Map clearing operation, Level in the Map Info is increased by 1 while Sequence in Map Info is set to 0.
-
 ### Lazy Write
 
 Trait `Storage` implements the `IterableMap` so that data can be saved to world state
 
 1. after execution of action method with receiver `&mut self`; or
 1. explicitly calling the setter `Self::set()`.
-
-### Operaion Sequence
-
-#### Get
-
-1. Get Map_Info
-2. Get the index from Key-Index
-3. Get the value from index
-
-#### Insert
-
-1. Get Map_Info
-2. Set Map_Info.Sequence + 1
-3. Set index to Key-Index
-4. Set key to Index-Key
-5. Set value to Index-Value
-
-#### Update
-
-1. Get index from Key-Index
-2. Set key to Index-Key
-3. Set value to Index-Value
-
-#### Remove
-
-1. Get index from Key-Index
-2. Get value from index
-3. Set None to Index-Key
-4. Set None to Index-Value
-5. Check value, if it is nested map, Clear the nested map
-
-#### Clear Map
-
-1. Get Map_Info
-2. Set Map_Info.Level + 1, Map_Info.Sequence = 0

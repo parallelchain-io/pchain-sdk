@@ -1,18 +1,7 @@
 /*
- Copyright 2022 ParallelChain Lab
-
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
- */
+    Copyright © 2023, ParallelChain Lab 
+    Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
+*/
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
@@ -34,7 +23,7 @@ pub(crate) fn generate_contract_struct(ist: &mut ItemStruct) -> TokenStream {
     // All Code after struct
     TokenStream::from(
         quote!{
-            use pchain_sdk::{Storage, StorageField, CallData, CallResult};
+            use pchain_sdk::Storable;
             
             #contract_struct
 
@@ -45,20 +34,7 @@ pub(crate) fn generate_contract_struct(ist: &mut ItemStruct) -> TokenStream {
     )
 }
 
-/// `generate_storage_impl` generates implementation of Storage for contract (load_storage and save_storage). 
-/// Example:
-///```no_run
-/// impl pchain_sdk::Storage for MyContract {
-///     fn __load_storage(field: &StorageField) -> Self {
-///         MyContract {
-///             data: Self::__load_storage_field(&field.add(0))
-///         }
-///     }
-///     fn __save_storage(&self, field :&StorageField) {
-///         Self::__save_storage_field(&self.field, &field.add(0));
-///     }
-/// }
-/// ```
+/// `generate_storage_impl` generates implementation of Storable for contract (load_storage and save_storage). 
 pub(crate) fn generate_storage_impl(ist: &mut ItemStruct) -> TokenStream {
     let struct_name = &ist.ident;
     let fields = if let syn::Fields::Named(syn::FieldsNamed {ref named, ..})
@@ -73,7 +49,7 @@ pub(crate) fn generate_storage_impl(ist: &mut ItemStruct) -> TokenStream {
         let f_name = f.ident.clone().unwrap();
         quote!{
             // Self is trait pchain_sdk::Storage
-            #f_name: Self::__load_storage_field(&field.add(#i as u8))
+            #f_name: pchain_sdk::Storable::__load_storage(&field.add(#i as u8))
         }
     });
 
@@ -82,20 +58,20 @@ pub(crate) fn generate_storage_impl(ist: &mut ItemStruct) -> TokenStream {
         let f_name = f.ident.clone().unwrap();
         quote!{
             // Self is trait Storage
-            Self::__save_storage_field(&mut self.#f_name, &field.add(#i as u8));
+            self.#f_name.__save_storage(&field.add(#i as u8));
         }
     });
 
     TokenStream::from(
         quote!{
-            impl pchain_sdk::Storage for #struct_name {
-                fn __load_storage(field :&StorageField) -> Self {
+            impl pchain_sdk::Storable for #struct_name {
+                fn __load_storage(field :&pchain_sdk::StoragePath) -> Self {
                     #struct_name {
                         #(#code_get_each_fields,)*
                     }
                 }
 
-                fn __save_storage(&mut self, field :&StorageField) {
+                fn __save_storage(&mut self, field :&pchain_sdk::StoragePath) {
                     #(#code_set_each_fields)*
                 }
             }
@@ -153,12 +129,11 @@ pub(crate) fn generate_accesser_impl(ist: &mut ItemStruct) -> TokenStream {
 
         quote!{
             fn #getter_method_name() -> #f_ty {
-                Self::__load_storage_field(&StorageField::new().add(#i as u8))
+                pchain_sdk::Storable::__load_storage(&pchain_sdk::StoragePath::new().add(#i as u8))
             }
 
-            fn #setter_method_name(value: #f_ty) {
-                let mut value = value;
-                Self::__save_storage_field(&mut value, &StorageField::new().add(#i as u8));
+            fn #setter_method_name(mut value: #f_ty) {
+                value.__save_storage(&pchain_sdk::StoragePath::new().add(#i as u8));
             }
         }        
     });
@@ -173,10 +148,10 @@ pub(crate) fn generate_accesser_impl(ist: &mut ItemStruct) -> TokenStream {
 
             impl #accesser_trait for #struct_name {
                 fn get() -> #struct_name {
-                    Self::__load_storage(&StorageField::new())
+                    Self::__load_storage(&pchain_sdk::StoragePath::new())
                 }
                 fn set(&mut self){
-                    self.__save_storage(&StorageField::new())
+                    self.__save_storage(&pchain_sdk::StoragePath::new())
                 }
                 #(#code_impl_methods_each_fields)*
             }
@@ -184,12 +159,8 @@ pub(crate) fn generate_accesser_impl(ist: &mut ItemStruct) -> TokenStream {
     )
 }
 
-/// `generate_contract_impl` generate code skeleton for entrypoints
-/// 
-/// - Init entrypoint
-/// - Actions entrypoint
-/// - Views entrypoint
-pub(crate) fn generate_contract_impl(ipl: &ItemImpl, is_export_metadata: bool) -> TokenStream {
+/// `generate_contract_impl` generate code skeleton for Contract Methods
+pub(crate) fn generate_contract_impl(ipl: &ItemImpl) -> TokenStream {
     let original_code = ipl.clone();
     let impl_name = match &*ipl.self_ty {
         syn::Type::Path(tp) => tp.path.segments.first().unwrap().ident.clone(),
@@ -197,37 +168,9 @@ pub(crate) fn generate_contract_impl(ipl: &ItemImpl, is_export_metadata: bool) -
             return generate_compilation_error("Cannot find named fields in the struct".to_string())
         }
     };
-    ////////////////////////////////////////////////////////
-    // 1. Create Contract Entrypoint Skeleton
-    ////////////////////////////////////////////////////////
-    let contract_skeleton = generate_actions_entrypoint(&impl_name, ipl);
-    
 
-    ////////////////////////////////////////////////////////
-    // 2. Create Init Entrypoint Skeleton
-    ////////////////////////////////////////////////////////
-    let constructor_skeleton = match generate_init_entrypoint(&impl_name, ipl){
-        Ok(s) => s,
-        Err(e) => return e
-    };
-    
-    ////////////////////////////////////////////////////////
-    // 3. Create View Entrypoint Skeleton
-    ////////////////////////////////////////////////////////
-    let views_skeleton = generate_views_entrypoint(&impl_name, ipl);
-
-    ////////////////////////////////////////////////////////
-    // 4. Create Meta Entrypoint Skeleton
-    ////////////////////////////////////////////////////////
-    let meta_skeleton = if is_export_metadata {
-        let external_call_info = generate_contract_metadata(&impl_name, ipl);
-        quote!{
-            #[no_mangle]
-            static __contract_metadata__ :&str = #external_call_info;
-        }
-    } else {
-        quote!{}
-    };
+    // Create Contract Method Skeleton
+    let contract_skeleton = generate_contract_methods(&impl_name, ipl);
 
     // All Code after impl
     TokenStream::from(
@@ -235,12 +178,6 @@ pub(crate) fn generate_contract_impl(ipl: &ItemImpl, is_export_metadata: bool) -
             #original_code
 
             #contract_skeleton
-
-            #constructor_skeleton
-
-            #views_skeleton
-
-            #meta_skeleton
         }
     )
 }
@@ -254,8 +191,8 @@ pub(crate) fn generate_contract_impl(ipl: &ItemImpl, is_export_metadata: bool) -
 /// 
 /// return:
 /// ```no_run
-/// let _d0: i32 = CallData::parse_multiple_arguments(&multi_args, 0usize);
-/// let _d1: i32 = CallData::parse_multiple_arguments(&multi_args, 1usize);
+/// let _d0: i32 = ContractMethodInput::parse_multiple_arguments(&multi_args, 0usize);
+/// let _d1: i32 = ContractMethodInput::parse_multiple_arguments(&multi_args, 1usize);
 /// ```
 /// 
 fn generate_let_arguments(pass_args :&mut Vec<proc_macro2::TokenStream>, fn_args :&Punctuated<FnArg, Comma>) -> proc_macro2::TokenStream {
@@ -266,7 +203,7 @@ fn generate_let_arguments(pass_args :&mut Vec<proc_macro2::TokenStream>, fn_args
                 let var_name = format_ident!("_d{}", format!("{}",var_idx));
                 let e_ty = &e.ty;
                 let q = quote!{
-                    let #var_name : #e_ty = CallData::parse_multiple_arguments(&multi_args, #var_idx);
+                    let #var_name : #e_ty = pchain_sdk::ContractMethodInput::parse_multiple_arguments(&multi_args, #var_idx);
                 };
                 var_idx+=1;
                 pass_args.push(quote!{
@@ -283,127 +220,25 @@ fn generate_let_arguments(pass_args :&mut Vec<proc_macro2::TokenStream>, fn_args
     }
 }
 
-/// generate skeleton code for init entrypoint
-fn generate_init_entrypoint(impl_name :&Ident, ipl: &ItemImpl) -> Result<Option<proc_macro2::TokenStream>, TokenStream> {
-    // let code_contractor_call;
-    let mut constructor_iter = ipl.items.iter().filter(|f| { match &f { syn::ImplItem::Method(e) => { e.is_init_entrypint() }, _=> false } });
-    
-
-    let constructor_function_name = quote!{ init };
-
-    // Skeleton - Constructor entrypoint
-    match constructor_iter.next() {
-        Some(syn::ImplItem::Method(e)) => {
-            if constructor_iter.count() > 0 {
-                return Err(generate_compilation_error("Cannot have more than one init entrypoint method".to_string()))
-            }
-
-            if !matches!(&e.sig.output, syn::ReturnType::Default) {
-                return Err(generate_compilation_error("Init entrypoint does not return value".to_string()))
-            }
-
-            let f_name = &e.sig.ident;
-
-            // parse multiple entrypoint arguments
-            let has_typed_args = e.sig.inputs.iter().any(|f| match &f {
-                syn::FnArg::Typed(_) => true,
-                _=> false
-            });
-            
-            let code_init_multiple_args = if has_typed_args {
-                quote!{ let multi_args = ctx.get_multiple_arguments(); }
-            } else { quote!{} };
-
-            // create method body based input arguments
-            let mut pass_args :Vec<proc_macro2::TokenStream> = vec![];
-            let code_parse_args = generate_let_arguments(&mut pass_args, &e.sig.inputs);
-
-            Ok(Some(quote!{
-                #[no_mangle]
-                pub extern "C" fn #constructor_function_name(){
-                    if let Some(mut ctx) = CallData::from_raw_call_data() {
-                        #code_init_multiple_args
-                        #code_parse_args
-                        #impl_name::#f_name(#(#pass_args,)*);
-                    } else {
-                        // panic if the caller invokes this contract by using input data with different calldata vesion
-                        // entrypoint was not executed as expected so it should not return as success to avoid confusing caller.
-                        panic!("Unable to parse input data when invoking this contract.")
-                    }
-                }
-            }))
-        }
-        _=>{Ok(None)}
-    }
-}
-
-
-/// `generate_actions_entrypoint` performs the following items:
-/// 1. generate entrypoint function actions() with macro #[contract_init]
-/// 2. generate skeleton of code inside actions().
-/// Example:
-/// ```no_run
-/// #[no_mangle]
-/// pub extern "C" fn actions() {
-///     if let Some(mut ctx) = CallData::from_raw_call_data() {
-///         let callresult :CallResult = match ctx.method_name.as_str() {
-///             "call_a_function" => {
-///                 ... // execute entrypoint
-///             },
-///             _=>{ unimplemented!() }
-///         };
-///         callresult.return_value();
-///     }
-/// }
-/// ```
-/// Each arm inside the entrypoint selection could be associate, mutable or immutable.
-/// 
-/// associate method does not interact with Contract Storage.
-/// ```no_run
-/// "associate_method_call" => {
-///     ...
-///     MyContract::associate_method_call()
-///     ...
-/// }
-/// ```
-/// 
-/// immutable method can read data from Contract Storage but not modifying the data.
-/// ```no_run
-/// "immutable_method_call" => {
-///     let mut contract = MyContract::__load_storage(&StorageField::new());
-///     ...
-///     MyContract::immutable_method_call()
-///     ...
-/// }
-/// ```
-/// 
-/// mutable method can read/write data from/to Contract Storage.
-/// ```no_run
-/// "mutable_method_call" => {
-///     let mut contract = MyContract::__load_storage(&StorageField::new());
-///     ...
-///     MyContract::mutable_method_call()
-///     ...
-///     contract.__save_storage(&StorageField::new());
-///     ...
-/// }
-/// ```
-fn generate_actions_entrypoint(impl_name :&Ident, ipl: &ItemImpl) -> Option<proc_macro2::TokenStream> {
+/// `generate_contract_methods` performs the following items:
+/// 1. generate contract method function entrypoint() with macro #[contract_init]
+/// 2. generate skeleton of code inside entrypoint().
+fn generate_contract_methods(impl_name :&Ident, ipl: &ItemImpl) -> Option<proc_macro2::TokenStream> {
     // create code segment for function selection
     let code_function_selection = ipl.items.iter().filter_map(|f| {
         match &f {
             syn::ImplItem::Method(e) => {
                 let fn_name = &e.sig.ident;
 
-                if !e.is_action_entrypoint() {
+                if !e.is_contract_method() {
                     return None;
                 }
 
                 // define load storage
-                let code_load_storage = if e.is_mutable_method() {
-                    quote!{let mut contract = #impl_name::__load_storage(&StorageField::new());}
-                } else if e.is_immutable_method() {
-                    quote!{let contract = #impl_name::__load_storage(&StorageField::new());}
+                let code_load_storage = if e.is_mutable() {
+                    quote!{let mut contract = #impl_name::__load_storage(&pchain_sdk::StoragePath::new());}
+                } else if e.is_immutable() {
+                    quote!{let contract = #impl_name::__load_storage(&pchain_sdk::StoragePath::new());}
                 } else {
                     quote!{}
                 };
@@ -427,15 +262,15 @@ fn generate_actions_entrypoint(impl_name :&Ident, ipl: &ItemImpl) -> Option<proc
                     quote!{}
                 };
                 let code_call_function = 
-                if e.is_associate_method() {
+                if e.is_associate() {
                     quote!{#impl_name::#fn_name(#(#pass_args,)*);}
                 } else {
                     quote!{contract.#fn_name(#(#pass_args,)*);}
                 };
 
                 // define save storage
-                let code_save_storage = if e.is_mutable_method() {
-                    quote!{contract.__save_storage(&StorageField::new());}
+                let code_save_storage = if e.is_mutable() {
+                    quote!{contract.__save_storage(&pchain_sdk::StoragePath::new());}
                 } else {
                     quote!{}
                 };
@@ -443,9 +278,9 @@ fn generate_actions_entrypoint(impl_name :&Ident, ipl: &ItemImpl) -> Option<proc
                 // define return method
                 let code_return_cb = 
                 if has_return_value {
-                    quote!{CallResult::set(&ret_cb)}
+                    quote!{pchain_sdk::ContractMethodOutput::set(&ret_cb)}
                 } else {
-                    quote!{CallResult::default()}
+                    quote!{pchain_sdk::ContractMethodOutput::default()}
                 };
 
                 Some(quote!{
@@ -464,193 +299,37 @@ fn generate_actions_entrypoint(impl_name :&Ident, ipl: &ItemImpl) -> Option<proc
         }
     });
 
-    // Skeleton - actions entrypoint
+    // Skeleton - contract entrypoint
     Some(quote!{
         #[no_mangle]
-        pub extern "C" fn actions() {
+        pub extern "C" fn entrypoint() {
             // Parse contract input
-            if let Some(mut ctx) = CallData::from_raw_call_data() {
-                // Enter function selector
-                let callresult :CallResult = match ctx.get_method_name() {
-                    #(#code_function_selection)*
-                    _=>{ unimplemented!() }
-                };
-                // Return
-                pchain_sdk::return_value(callresult.to_vec());
-            } else {
-                // panic if the caller invokes this contract by using input data with different calldata vesion
-                // entrypoint was not executed as expected so it should not return as success to avoid confusing caller.
-                panic!("Unable to parse input data when invoking this contract.")
-            }
+            let mut ctx = pchain_sdk::ContractMethodInput::from_transaction();
+            // Enter function selector
+            let callresult: pchain_sdk::ContractMethodOutput = match ctx.method_name.as_str() {
+                #(#code_function_selection)*
+                _=>{ unimplemented!() }
+            };
+            // Return
+            if let Some(return_value) = callresult.get() {
+                pchain_sdk::return_value(return_value);
+            } 
         }
     })
-}
-
-fn generate_views_entrypoint(impl_name :&Ident, ipl: &ItemImpl) -> Option<proc_macro2::TokenStream> {
-    // check whether it consists of view methods. Otherwise return None so that there is no warnings for unreachable code
-    if !ipl.items.iter().any(|f|{
-        match &f {
-            syn::ImplItem::Method(e) => e.is_view_entrypoint(),
-            _ => false
-        }
-    }) { return None }
-    
-    // create code segment for function selection
-    let code_views_selection = ipl.items.iter().filter_map(|f| {
-        match &f {
-            syn::ImplItem::Method(e) => {
-                let fn_name = &e.sig.ident;
-                if !e.is_view_entrypoint() {
-                    return None;
-                }
-
-                // define load storage
-                let code_load_storage = if e.is_mutable_method() {
-                    quote!{let mut contract = #impl_name::__load_storage(&StorageField::new());}
-                } else if e.is_immutable_method() {
-                    quote!{let contract = #impl_name::__load_storage(&StorageField::new());}
-                } else {
-                    quote!{}
-                };
-
-                // create method body based input arguments
-                let has_typed_args = e.sig.inputs.iter().any(|f| match &f {
-                    syn::FnArg::Typed(_) => true,
-                    _=> false
-                });
-                let code_init_multiple_args = if has_typed_args {
-                    quote!{ let multi_args = ctx.get_multiple_arguments(); }
-                } else { quote!{} };
-                let mut pass_args :Vec<proc_macro2::TokenStream> = vec![];
-                let code_parse_args = generate_let_arguments(&mut pass_args, &e.sig.inputs);
-
-                // define calling body
-                let has_return_value = !matches!(&e.sig.output, syn::ReturnType::Default);
-                let code_return_handle = if has_return_value {
-                    quote!{let ret_cb = }
-                } else {
-                    quote!{}
-                };
-                let code_call_function = 
-                if e.is_associate_method() {
-                    quote!{#impl_name::#fn_name(#(#pass_args,)*);}
-                } else {
-                    quote!{contract.#fn_name(#(#pass_args,)*);}
-                };
-                                
-                // define return method
-                let code_return_cb = 
-                if has_return_value {
-                    quote!{CallResult::set(&ret_cb)}
-                } else {
-                    quote!{CallResult::default()}
-                };
-
-                Some(quote!{
-                    stringify!(#fn_name) => {
-                        #code_load_storage
-                        #code_init_multiple_args
-                        #code_parse_args
-                        #code_return_handle
-                        #code_call_function
-                        #code_return_cb
-                    }
-                })
-            }
-            _=>{None}
-        }
-    });
-
-    // Skeleton - views entrypoint
-    Some(
-    quote!{
-        #[no_mangle]
-        pub extern "C" fn views() {
-            if let Some(mut ctx) = CallData::from_raw_call_data() {
-                // Enter function selector
-                let callresult :CallResult = match ctx.get_method_name() {
-                    #(#code_views_selection)*
-                    _=>{ unimplemented!() }
-                };
-                // Return
-                pchain_sdk::return_value(callresult.to_vec());
-            } else {
-                // panic if the caller invokes this contract by using input data with different calldata vesion
-                // entrypoint was not executed as expected so it should not return as success to avoid confusing caller.
-                panic!("Unable to parse input data when invoking this contract.")
-            }
-        }
-    })
-}
-
-/// generate the string representation of contract meta
-fn generate_contract_metadata(impl_name :&Ident, ipl: &ItemImpl) -> String {
-    let action_methods_string : String = ipl.items.iter().flat_map(|f| {
-        match &f {
-            syn::ImplItem::Method(e) => {
-                if !e.is_action_entrypoint() { return None }
-                Some(generate_trait_methods_string(e))
-            }
-            _=>{None}
-        }
-    }).collect();
-    let action_impl_name = format_ident!("{}Actions", impl_name.to_string());
-    let action_trait =  format!("pub trait {} {{{}}}", action_impl_name, action_methods_string);
-
-    let view_methods_string : String = ipl.items.iter().flat_map(|f| {
-        match &f {
-            syn::ImplItem::Method(e) => {
-                if !e.is_view_entrypoint() { return None }
-                Some(generate_trait_methods_string(e))
-            }
-            _=>{None}
-        }
-    }).collect();
-    let view_impl_name = format_ident!("{}Views", impl_name.to_string());
-    let view_trait = if view_methods_string.is_empty() { "".to_string() } else { format!("pub trait {} {{{}}}", view_impl_name, view_methods_string) };
-
-    [action_trait, view_trait, "\0".to_string()].concat()
-}
-
-fn generate_trait_methods_string(e: &ImplItemMethod) -> String {
-    let args : Vec<String>= e.sig.inputs.iter().flat_map(|arg| {
-        match &arg {
-            syn::FnArg::Typed(pty) => {
-                let pat = &pty.pat;
-                let ty = &pty.ty;
-                let pat_string = quote!(#pat);
-                let ty_string = quote!(#ty).to_string().chars().filter(|c| !c.is_whitespace()).collect::<String>();
-                Some(format!("{} :{}", pat_string, ty_string))
-            },
-            _=>{ None }
-        }
-    }).collect();
-    
-    let args = args.join(", ");
-    let rets = match &e.sig.output{
-        syn::ReturnType::Type(_, output_type) => {
-            let ret_tokenstream = quote!(#output_type);
-            format!(" -> {}", ret_tokenstream.to_string().chars().filter(|c| !c.is_whitespace()).collect::<String>())
-        }
-        _=> { "".to_string()}
-    };
-    format!("fn {}({}){};", &e.sig.ident ,args, rets)
 }
 
 /// Trait for adding helper functions to method for checking information of a contract
-trait EntrypointAnalysis {
-    fn is_mutable_method(&self) -> bool;
-    fn is_immutable_method(&self) -> bool;
-    fn is_associate_method(&self) -> bool;
-    fn is_init_entrypint(&self) -> bool;
-    fn is_view_entrypoint(&self) -> bool;
-    fn is_action_entrypoint(&self) -> bool;
+trait ContractMethodAnalysis {
+    fn is_mutable(&self) -> bool;
+    fn is_immutable(&self) -> bool;
+    fn is_associate(&self) -> bool;
+    fn is_contract_method(&self) -> bool;
 }
 
 /// Impl for EntrypointAnalysis explicitly to see if the methods match with design of a contract 
-impl EntrypointAnalysis for ImplItemMethod {
+impl ContractMethodAnalysis for ImplItemMethod {
 
-    fn is_mutable_method(&self) -> bool {
+    fn is_mutable(&self) -> bool {
         // mutable method with &mut self as receiver
         let fn_args = &self.sig.inputs;
         if fn_args.len() < 1 { return false; }
@@ -661,7 +340,7 @@ impl EntrypointAnalysis for ImplItemMethod {
             _=>{ false }
         }
     }
-    fn is_immutable_method(&self) -> bool {
+    fn is_immutable(&self) -> bool {
         // immutable method with &self as receiver
         let fn_args = &self.sig.inputs;
         if fn_args.len() < 1 { return false; }
@@ -672,7 +351,7 @@ impl EntrypointAnalysis for ImplItemMethod {
             _=>{ false }
         }
     }
-    fn is_associate_method(&self) -> bool {
+    fn is_associate(&self) -> bool {
         // method without receiver
         let fn_args = &self.sig.inputs;
         !fn_args.iter().any(|fa| {
@@ -680,49 +359,13 @@ impl EntrypointAnalysis for ImplItemMethod {
         })
     }
 
-    fn is_init_entrypint(&self) -> bool {
-        let fn_args = &self.sig.inputs;
-        // init does not take receiver arguments
-        if fn_args.iter().any(|fa| { matches!(&fa, syn::FnArg::Receiver(_))}) {
-            return false;
-        }
-
+    fn is_contract_method(&self) -> bool {
         self.attrs.iter().any(|attr|{
-            match attr.parse_meta() {
-                Ok(meta)=>{
-                    match meta.path().get_ident() {
-                        Some(ident)=> ident.to_string() == "init".to_string(),
-                        _=>{false}
-                    }}
-                _=>{false}
-            }
-        })
-    }
-    
-    fn is_view_entrypoint(&self) -> bool {
-        // view entrypoint does not count as normal associate method
-        self.attrs.iter().any(|attr|{
-            match attr.parse_meta() {
-                Ok(meta)=>{
-                    match meta.path().get_ident() {
-                        Some(ident)=> ident.to_string() == "view".to_string(),
-                        _=>{false}
-                    }}
-                _=>{false}
-            }
-        })
-    }
-
-    fn is_action_entrypoint(&self) -> bool {
-        self.attrs.iter().any(|attr|{
-            match attr.parse_meta() {
-                Ok(meta)=>{
-                    match meta.path().get_ident() {
-                        Some(ident)=> ident.to_string() == "action".to_string(),
-                        _=>{false}
-                    }}
-                _=>{false}
-            }
+            attr.parse_meta().map_or(false, |meta| {
+                meta.path().get_ident().map_or(false, |ident| {
+                    ident.to_string() == "call".to_string()
+                })
+            })
         })
     }
 
