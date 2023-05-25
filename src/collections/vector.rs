@@ -3,9 +3,49 @@
     Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
 */
 
-//! vector defines data structure representing Vector in contract and data could be gas-efficiently 
-//! load from or save to world state lazily. It behaves as `Vec` that supports `push`, `pop`, `iter`, 
-//! indexing, etc.
+//! ## Vector
+//! 
+//! `Vector` can be a Contract Field defined in the contract struct. E.g.
+//!
+//! ```rust
+//! #[contract]
+//! struct MyContract {
+//!     vector: Vector<u64> // this vector declares to store u64 integers to world state
+//! }
+//! ```
+//!
+//! `Vector` supports following operations in contract:
+//!
+//! ```rust
+//! // No read/set in world state happens when executing the below methods. 
+//! pub fn len(&self) -> usize
+//! pub fn push(&mut self, value: &T) 
+//! pub fn pop(&mut self)
+//! // No read to world state can happen when executing the below methods. 
+//! pub fn iter(&'a self) -> VectorInto<'a, T>
+//! pub fn iter_mut(&'a self) -> VectorIntoMut<'a, T>
+//! ```
+//!
+//! The value can be obtained by indexing operations. E.g.
+//! ```rust
+//! let data = self.vector[0]; // can be either a read from cached value or a read from world state 
+//! self.vector[0] = data; // No actual write to world state at this line
+//! ```
+//!
+//! ### Iteration
+//!
+//! Iteration may involve read from world state. E.g.
+//! ```rust
+//! // Iterate over immutable reference to the data
+//! self.vector.iter().for_each(|item|{
+//!     ...
+//! });
+//! 
+//! // Iterate over mutable reference to the data
+//! self.vector.iter_mut().for_each(|item|{
+//!     //...
+//! });
+//! ```
 //! 
 //! ### Storage Model
 //! 
@@ -17,6 +57,12 @@
 //! |Element|P, 1, I| user defined data (borsh-serialized)|
 //! - P: parent key
 //! - I: little endian bytes of index (u32)
+//! 
+//! ### Lazy Write
+//! 
+//! Trait `Storage` implements the `Vector` so that data can be saved to world state
+//! 1. after execution of action method with receiver `&mut self`; or
+//! 2. explicitly calling the setter `Self::set()`.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;

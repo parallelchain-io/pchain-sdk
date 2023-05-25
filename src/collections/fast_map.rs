@@ -3,8 +3,28 @@
     Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
 */
 
-//! fastmap defines data structure represening Map in contract and data could be gas-efficiently 
-//! load from or save to world state lazily. It behaves as map that supports `get`, `insert`, `remove`, etc.
+//! ## FastMap
+//! 
+//! `FastMap` can be a Contract Field defined in the contract struct. E.g.
+//! 
+//! ```rust
+//! #[contract]
+//! struct MyContract {
+//!     /// This FastMap accepts key and value with borsh-serializable data types.
+//!     map: FastMap<String, u64> 
+//! }
+//! ```
+//! 
+//! `FastMap` supports following operations in contract:
+//! 
+//! ```rust
+//! // No read/set in world state happens when executing the below methods, except get and get_mut which either get the value from cache or world state.
+//! pub fn new() -> Self
+//! pub fn get(&self, key: &K) -> Option<Insertable>
+//! pub fn get_mut(&mut self, key: &K) -> Option<&mut Insertable>
+//! pub fn insert(&mut self, key: &K, value: &V) -> Option<&mut Insertable>
+//! pub fn remove(&mut self, key: &K)
+//! ```
 //! 
 //! ### Storage Model
 //! 
@@ -21,6 +41,13 @@
 //! In world state, the key format is `parent key` + `edition` (u32, 4 bytes) + `user defined key`. If nested FastMap is 
 //! inserted to FastMap as a value, `parent key` would be the key of the FastMap being inserted. Actual value to be stored
 //! into world state is borsh-serialized structure of `Cell` which is either a value (bytes) or information of nested map.
+//! 
+//! ### Lazy Write
+//! 
+//! Trait `Storage` implements the `FastMap` so that data can be saved to world state
+//! 
+//! 1. after execution of action method with receiver `&mut self`; or
+//! 2. explicitly calling the setter `Self::set()`.
 
 use std::{marker::PhantomData, collections::BTreeMap};
 use borsh::{BorshSerialize, BorshDeserialize};

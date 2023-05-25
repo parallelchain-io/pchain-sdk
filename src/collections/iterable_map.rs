@@ -3,10 +3,29 @@
     Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
 */
 
-//! iterablemap defines data structure representing Map in contract and data could be gas-efficiently 
-//! load from or save to world state lazily.It behaves as map that supports `get`, `insert`, `remove` and
-//! iteration on keys or values.
+//! ## IterableMap
 //! 
+//! `IterableMap` can be a Contract Field defined in the contract struct. E.g.
+//! 
+//! ```rust
+//! #[contract]
+//! struct MyContract {
+//!     iterable_map: IterableMap<K, V>,
+//! }
+//! ```
+//! 
+//! `IterableMap` supports following operations in contract:
+//! 
+//! ```rust
+//! pub fn get(&self, key: &K) -> Option<V>
+//! pub fn get_mut(&mut self, key: &K) -> Option<&mut Iterable>
+//! pub fn insert(&mut self, key: &K, value: V) -> Option<&mut V>
+//! pub fn remove(&mut self, key: &K)
+//! pub fn keys(&self) -> IterableMapIntoKey
+//! pub fn values(&self) -> IterableMapIntoValue
+//! pub fn values_mut(&mut self) -> IterableMapIntoMutValue
+//! pub fn clear(&mut self)
+//! ```
 //! 
 //! ### Storage Model
 //! 
@@ -23,6 +42,13 @@
 //! - L: map level
 //! - I: little endian bytes of index (u32)
 //! - K: user defined key
+//! 
+//! ### Lazy Write
+//! 
+//! Trait `Storage` implements the `IterableMap` so that data can be saved to world state
+//! 
+//! 1. after execution of action method with receiver `&mut self`; or
+//! 2. explicitly calling the setter `Self::set()`.
 
 use std::{marker::PhantomData, collections::BTreeMap};
 use borsh::{BorshDeserialize, BorshSerialize};

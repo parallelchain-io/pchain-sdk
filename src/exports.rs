@@ -3,7 +3,7 @@
     Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
 */
 
-//! Defines a function, `alloc` that is exported from Contract WASM modules so that the ParallelChain F VM 
+//! Defines a function, `alloc` that is exported from Contract WASM modules so that the ParallelChain VM 
 //! can allocate segments in WASM linear memory. The name of this module is rather awkward, since `alloc` *is not* the 
 //! only function exported from Contract WASM modules. We plan to merge this module with imports in a future version of the SDK.
 
