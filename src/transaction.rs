@@ -8,7 +8,7 @@
 
 use crate::imports;
 
-/// Get from address of invoking transaction
+/// Get the address of this contract call
 pub fn calling_account() -> [u8;32] {
     let mut args_ptr: u32 = 0;
     let args_ptr_ptr = &mut args_ptr;
@@ -21,7 +21,7 @@ pub fn calling_account() -> [u8;32] {
     TryInto::<[u8;32]>::try_into(arguments).unwrap()
 }
 
-/// Get to address of invoking transaction
+/// Get current address (equivalent to this contract address)
 pub fn current_account() -> [u8;32] {
     let mut args_ptr: u32 = 0;
     let args_ptr_ptr = &mut args_ptr;
@@ -34,7 +34,7 @@ pub fn current_account() -> [u8;32] {
     TryInto::<[u8;32]>::try_into(arguments).unwrap()
 }
 
-/// Get value of invoking transaction
+/// Get transferring amount in this contract call
 pub fn amount() -> u64 {
     unsafe { imports::amount() }
 }
@@ -44,7 +44,7 @@ pub fn is_internal_call() -> bool {
     unsafe { imports::is_internal_call() != 0 }
 }
 
-/// Get transaction hash of invoking transaction
+/// Get transaction hash of this contract call
 pub fn transaction_hash() -> [u8;32] {
     let mut args_ptr: u32 = 0;
     let args_ptr_ptr = &mut args_ptr;
@@ -57,7 +57,7 @@ pub fn transaction_hash() -> [u8;32] {
     TryInto::<[u8;32]>::try_into(arguments).unwrap()
 }
 
-/// Get method name of the invoking Contract Method
+/// Get method name of the invoking method in this contract call
 pub fn method() -> String {
     let mut args_ptr: u32 = 0;
     let args_ptr_ptr = &mut args_ptr;
@@ -70,7 +70,7 @@ pub fn method() -> String {
     String::from_utf8(arguments).unwrap()
 }
 
-/// Get method name of the invoking Contract Method
+/// Get method arguments of the invoking method in this contract call
 pub fn arguments() -> Vec<u8> {
     let mut args_ptr: u32 = 0;
     let args_ptr_ptr = &mut args_ptr;

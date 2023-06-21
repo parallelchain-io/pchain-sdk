@@ -28,7 +28,7 @@ use self::core_impl::*;
 #[proc_macro_attribute]
 pub fn contract(_attr_args: TokenStream, input: TokenStream) -> TokenStream {
 
-  if let Ok(mut ist) = syn::parse::<ItemStruct>(input.clone()) {
+  if let Ok(mut ist) = syn::parse::<ItemStruct>(input) {
     generate_contract_struct(&mut ist)
   } else {
     generate_compilation_error("ERROR:  contract macro can only be applied to smart contract Struct to read/write into world state".to_string())
@@ -54,8 +54,8 @@ pub fn contract(_attr_args: TokenStream, input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn contract_methods(_attr_args: TokenStream, input: TokenStream) -> TokenStream {
-  if let Ok(mut ipl) = syn::parse::<ItemImpl>(input) {
-    generate_contract_impl(&mut ipl)
+  if let Ok(ipl) = syn::parse::<ItemImpl>(input) {
+    generate_contract_impl(&ipl)
   } else {
     generate_compilation_error("ERROR: contract_methods macro can only be applied to smart contract implStruct/implTrait.".to_string())
   }
@@ -127,7 +127,7 @@ pub fn contract_methods(_attr_args: TokenStream, input: TokenStream) -> TokenStr
 pub fn use_contract(attr_args: TokenStream, input: TokenStream) -> TokenStream {  
 
   let attr_args = syn::parse_macro_input!(attr_args as syn::AttributeArgs);
-  if attr_args.len() < 1 || attr_args.len() > 2 {
+  if attr_args.is_empty() || attr_args.len() > 2 {
     return generate_compilation_error("At least one argument is required. Expect first argument to be a contract address. Second argument (Optional) to be 'action' or 'view'.".to_string());
   };
 
@@ -169,7 +169,7 @@ pub fn use_contract(attr_args: TokenStream, input: TokenStream) -> TokenStream {
 /// 
 #[proc_macro_attribute]
 pub fn contract_field(_attr_args: TokenStream, input: TokenStream) -> TokenStream {
-  if let Ok(mut ist) = syn::parse::<ItemStruct>(input.clone()) {
+  if let Ok(mut ist) = syn::parse::<ItemStruct>(input) {
     let contract_field_struct = ist.clone();
     let struct_impls:proc_macro2::TokenStream = generate_storage_impl(&mut ist).into();
     
@@ -190,7 +190,9 @@ pub fn contract_field(_attr_args: TokenStream, input: TokenStream) -> TokenStrea
 /// ### Example
 /// ```no_run
 /// #[call]
-/// fn action_method(d1: i32) -> String{ ..
+/// fn action_method(d1: i32) -> String { 
+///  // ...
+/// }
 /// ```
 #[proc_macro_attribute]
 pub fn call(_attr_args: TokenStream, input: TokenStream) -> TokenStream {

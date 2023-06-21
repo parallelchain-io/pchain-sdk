@@ -7,6 +7,13 @@
 //! aid with the development of smart contracts executable in WebAssembly (WASM) engines implementing 
 //! the ParallelChain Mainnet Contract Binary Interface Subprotocol.
 
+#![cfg_attr(
+    feature = "cargo-clippy",
+    allow(
+        clippy::new_without_default
+    )
+)]
+
 pub mod blockchain;
 
 pub mod crypto;

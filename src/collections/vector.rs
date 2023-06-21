@@ -3,66 +3,7 @@
     Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
 */
 
-//! ## Vector
-//! 
-//! `Vector` can be a Contract Field defined in the contract struct. E.g.
-//!
-//! ```rust
-//! #[contract]
-//! struct MyContract {
-//!     vector: Vector<u64> // this vector declares to store u64 integers to world state
-//! }
-//! ```
-//!
-//! `Vector` supports following operations in contract:
-//!
-//! ```rust
-//! // No read/set in world state happens when executing the below methods. 
-//! pub fn len(&self) -> usize
-//! pub fn push(&mut self, value: &T) 
-//! pub fn pop(&mut self)
-//! // No read to world state can happen when executing the below methods. 
-//! pub fn iter(&'a self) -> VectorInto<'a, T>
-//! pub fn iter_mut(&'a self) -> VectorIntoMut<'a, T>
-//! ```
-//!
-//! The value can be obtained by indexing operations. E.g.
-//! ```rust
-//! let data = self.vector[0]; // can be either a read from cached value or a read from world state 
-//! self.vector[0] = data; // No actual write to world state at this line
-//! ```
-//!
-//! ### Iteration
-//!
-//! Iteration may involve read from world state. E.g.
-//! ```rust
-//! // Iterate over immutable reference to the data
-//! self.vector.iter().for_each(|item|{
-//!     ...
-//! });
-//! 
-//! // Iterate over mutable reference to the data
-//! self.vector.iter_mut().for_each(|item|{
-//!     //...
-//! });
-//! ```
-//! 
-//! ### Storage Model
-//! 
-//! World State Key Format:
-//! 
-//! |Component|WS Key|WS Value (Data type) |
-//! |:---|:---|:---|
-//! |Length|P, 0| u32 |
-//! |Element|P, 1, I| user defined data (borsh-serialized)|
-//! - P: parent key
-//! - I: little endian bytes of index (u32)
-//! 
-//! ### Lazy Write
-//! 
-//! Trait `Storage` implements the `Vector` so that data can be saved to world state
-//! 1. after execution of action method with receiver `&mut self`; or
-//! 2. explicitly calling the setter `Self::set()`.
+//! Defines the collection struct [Vector].
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -73,8 +14,57 @@ use borsh::{BorshSerialize, BorshDeserialize};
 use crate::storage;
 use crate::{Storable, StoragePath};
 
-/// `Vector` is a contract-level data structure to provide abstraction by utilizing Get and Set operations associated with Contract Storage.
-/// It supports lazy read/write to get gas consumption to be efficient, consistent and predictable.
+/// [Vector] is a contract-level data structure to provide abstraction by utilizing Get and Set operations associated with Contract Storage.
+/// It supports lazy read/write on elements that can be iterated.
+/// 
+/// ## Vector
+/// 
+/// `Vector` can be a Contract Field defined in the contract struct. E.g.
+///
+/// ```rust
+/// #[contract]
+/// struct MyContract {
+///     vector: Vector<u64> // this vector declares to store u64 integers to world state
+/// }
+/// ```
+///
+/// The value can be obtained by indexing operations. E.g.
+/// ```rust
+/// let data = self.vector[0]; // can be either a read from cached value or a read from world state 
+/// self.vector[0] = data; // No actual write to world state at this line
+/// ```
+///
+/// ### Iteration
+///
+/// Iteration may involve read from world state. E.g.
+/// ```rust
+/// // Iterate over immutable reference to the data
+/// self.vector.iter().for_each(|item|{
+///     ...
+/// });
+/// 
+/// // Iterate over mutable reference to the data
+/// self.vector.iter_mut().for_each(|item|{
+///     //...
+/// });
+/// ```
+/// 
+/// ### Storage Model
+/// 
+/// Account Storage State Key Format:
+/// 
+/// |Component|Key|Value (Data type) |
+/// |:---|:---|:---|
+/// |Length|P, 0| u32 |
+/// |Element|P, 1, I| user defined data (borsh-serialized)|
+/// - P: parent key
+/// - I: little endian bytes of index (u32)
+/// 
+/// ### Lazy Write
+/// 
+/// Trait `Storage` implements the `Vector` so that data can be saved to world state
+/// 1. after execution of action method with receiver `&mut self`; or
+/// 2. explicitly calling the setter `Self::set()`.
 #[derive(Clone, Default)]
 pub struct Vector<T> where T: Storable {
     write_set: RefCell<BTreeMap<usize, T>>,
@@ -85,13 +75,13 @@ pub struct Vector<T> where T: Storable {
     parent_key: Vec<u8>
 }
 
-/// `VectorIter` is Iterator created by `Vector::iter()`
+/// Iterator created by `Vector::iter()`
 pub struct VectorIter<'a, T> where T: Storable + Clone {
     vector: &'a Vector<T>,
     idx: usize,
 }
 
-/// `VectorIter` is mutable Iterator created by `Vector::iter_mut()`
+/// Mutable Iterator created by `Vector::iter_mut()`
 pub struct VectorIterMut<'a, T> where T: Storable + Clone {
     vector: &'a mut Vector<T>,
     idx: usize,
@@ -110,6 +100,11 @@ impl<'a, T> Vector<T> where T: Storable + Clone {
     /// length of the vector
     pub fn len(&self) -> usize {
         self.length
+    }
+
+    /// check if it is empty vector 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// `push` adds item to the last of vector, which does not immediately take effect in Contract Storage.
@@ -133,6 +128,7 @@ impl<'a, T> Vector<T> where T: Storable + Clone {
     }
 
     /// get mutable reference from read_set
+    #[allow(clippy::mut_from_ref)]
     fn get_mut(&self, idx: usize) -> &mut T {
         if idx >= self.length {
             panic!()
@@ -162,6 +158,7 @@ impl<'a, T> Vector<T> where T: Storable + Clone {
         self.write_to_read_set(idx, value)
     }
 
+    #[allow(clippy::mut_from_ref)]
     fn write_to_read_set(&self, idx: usize, value: T) -> &mut T {
         let mut read_set = self.read_set.borrow_mut();
         read_set.insert(idx, value);
@@ -209,7 +206,7 @@ impl<'a, T> Vector<T> where T: Storable + Clone {
         })
     }
 
-    /// World State Key for saving the length of vector.
+    /// Account Storage State Key for saving the length of vector.
     fn wskey_len(parent_key: Vec<u8>) -> Vec<u8> {
         [
             parent_key,
@@ -217,7 +214,7 @@ impl<'a, T> Vector<T> where T: Storable + Clone {
         ].concat()
     }
     
-    /// World State Key for saving the value of vector element, keyed by index of the element.
+    /// Account Storage State Key for saving the value of vector element, keyed by index of the element.
     fn wskey_index(parent_key: Vec<u8>, idx: usize) -> Vec<u8> {
         [
             parent_key, 
@@ -250,7 +247,7 @@ impl<'a, T> Iterator for VectorIterMut<'a, T> where T: Storable + Clone {
         let value = self.vector.get(self.idx);
         let ret = self.vector.write_to_write_set(self.idx, value.clone());
         self.idx += 1;
-        return Some(unsafe{
+        Some(unsafe{
             let r = ret as * const T;
             &mut *(r as *mut T) 
         })

@@ -84,7 +84,7 @@ pub(crate) fn generate_external_contract_mod(trait_definition: ItemTrait, contra
 fn transform_to_function_definition(original_trait_item_method: &mut TraitItemMethod, trait_visibility: &Visibility, contract_address: &String) -> syn::Result<Item> {
     // no default implementation of a trait is allowed. The SDK cross contract associated function will handle the default implementation.
     if original_trait_item_method.default.is_some() {
-        return Err(syn::Error::new(
+        Err(syn::Error::new(
             original_trait_item_method.span(),
             "Traits that are used to describe external contract should not include
              default implementations because this is not a valid use case of traits
@@ -166,7 +166,7 @@ fn transform_to_function_definition(original_trait_item_method: &mut TraitItemMe
         };
 
         // gets the trait item method name to be passed as part of the SDK cross contract call
-        let trait_item_method_name = format!("{}", original_trait_item_method.sig.ident.to_string());
+        let trait_item_method_name = format!("{}", original_trait_item_method.sig.ident);
 
         //////////////////////////////////////////////////////////////////////////////////////////////
         // 3. Parses the decoded contract address from the argument to `use_contract` attribute macro.
@@ -198,7 +198,7 @@ fn transform_to_function_definition(original_trait_item_method: &mut TraitItemMe
         };
 
         // returns the new associated function defintion
-        return Ok(
+        Ok(
             Item::Fn(
                 ItemFn {
                     attrs: original_trait_item_method.clone().attrs,

@@ -13,6 +13,6 @@ pub extern "C" fn alloc(len: u32) -> *mut u8 {
     let ptr = buf.as_mut_ptr();
     
     std::mem::forget(buf);
-
-    return ptr;
+    
+    ptr
 }

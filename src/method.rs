@@ -17,7 +17,7 @@ use borsh::{BorshSerialize, BorshDeserialize};
 
 use crate::transaction;
 
-/// wrapper struct got pchain_types::CallData
+/// Input of a contract method in a call, which consists of method name and its borsh-serialized arguments.
 pub struct ContractMethodInput {
     pub method_name: String,
     pub arguments: Vec<u8>,
@@ -36,14 +36,14 @@ impl ContractMethodInput {
         self.method_name.as_str()
     }
 
-    /// Converts `arguments` in Call command  to Vec<Vec<u8>> so that it can be parsed to specific data type for the entrypoint function.
+    /// Converts `arguments` in Call command  to `Vec<Vec<u8>>` so that it can be parsed to specific data type for the entrypoint function.
     pub fn get_multiple_arguments(&self) -> Vec<Vec<u8>> {
         let mut args = self.arguments.as_slice();
         BorshDeserialize::deserialize(&mut args).unwrap()
     }
 
     /// Parser function to deserialize indexed argument into defined data type
-    pub fn parse_multiple_arguments<T: BorshDeserialize>(args: &Vec<Vec<u8>>, idx: usize) -> T {
+    pub fn parse_multiple_arguments<T: BorshDeserialize>(args: &[Vec<u8>], idx: usize) -> T {
         let bs = args[idx].clone();
         BorshDeserialize::deserialize(&mut bs.as_ref()).unwrap()
     }
@@ -62,7 +62,7 @@ impl ContractMethodInput {
 /// .add(0_i32)
 /// .add(vec![0u8; 8]);
 /// 
-/// // construct Vec<u8> data to pass to CallData::arguments 
+/// // construct Vec<u8> data to pass to call arguments 
 /// let args :Vec<u8> = args_builder.to_call_arguments();
 /// ...
 /// ```
@@ -86,14 +86,8 @@ impl ContractMethodInputBuilder {
 
 /// Encapsulates the return value as serialized bytes from contract method. 
 /// None if the contract method does not specify return value.
-#[derive(BorshSerialize, BorshDeserialize)]
+#[derive(BorshSerialize, BorshDeserialize, Default)]
 pub struct ContractMethodOutput(Option<Vec<u8>>);
-
-impl Default for ContractMethodOutput {
-    fn default() -> Self {
-        Self (None)
-    }
-}
 
 impl ContractMethodOutput {
     pub fn set<T: BorshSerialize>(result :&T) -> Self {

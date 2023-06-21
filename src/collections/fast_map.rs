@@ -3,58 +3,49 @@
     Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
 */
 
-//! ## FastMap
-//! 
-//! `FastMap` can be a Contract Field defined in the contract struct. E.g.
-//! 
-//! ```rust
-//! #[contract]
-//! struct MyContract {
-//!     /// This FastMap accepts key and value with borsh-serializable data types.
-//!     map: FastMap<String, u64> 
-//! }
-//! ```
-//! 
-//! `FastMap` supports following operations in contract:
-//! 
-//! ```rust
-//! // No read/set in world state happens when executing the below methods, except get and get_mut which either get the value from cache or world state.
-//! pub fn new() -> Self
-//! pub fn get(&self, key: &K) -> Option<Insertable>
-//! pub fn get_mut(&mut self, key: &K) -> Option<&mut Insertable>
-//! pub fn insert(&mut self, key: &K, value: &V) -> Option<&mut Insertable>
-//! pub fn remove(&mut self, key: &K)
-//! ```
-//! 
-//! ### Storage Model
-//! 
-//! World State Key Format:
-//! 
-//! |Component|WS Key|WS Value (Data type) |
-//! |:---|:---|:---|
-//! |Key-Value|P, E, K| CellContext |
-//! 
-//! - P: parent key
-//! - E: little endian bytes of edition number (u32)
-//! - K: user defined key
-//! 
-//! In world state, the key format is `parent key` + `edition` (u32, 4 bytes) + `user defined key`. If nested FastMap is 
-//! inserted to FastMap as a value, `parent key` would be the key of the FastMap being inserted. Actual value to be stored
-//! into world state is borsh-serialized structure of `Cell` which is either a value (bytes) or information of nested map.
-//! 
-//! ### Lazy Write
-//! 
-//! Trait `Storage` implements the `FastMap` so that data can be saved to world state
-//! 
-//! 1. after execution of action method with receiver `&mut self`; or
-//! 2. explicitly calling the setter `Self::set()`.
+//! Defines the collection struct [FastMap].
 
 use std::{marker::PhantomData, collections::BTreeMap};
 use borsh::{BorshSerialize, BorshDeserialize};
 use crate::{storage::{self}, Storable, StoragePath};
 
-/// `FastMap` is a contract-level data structure to provide abstraction by utilizing Get and Set operations associated with Contract Storage.
-/// It supports lazy read/write to get gas consumption to be efficient, consistent and predictable.
+/// [FastMap] is a contract-level data structure to provide abstraction by utilizing Get and Set operations 
+/// associated with Contract Storage. It supports lazy read/write on key-value tuples.
+/// 
+/// ## FastMap
+/// 
+/// `FastMap` can be a Contract Field defined in the contract struct. E.g.
+/// 
+/// ```rust
+/// #[contract]
+/// struct MyContract {
+///     /// This FastMap accepts key and value with borsh-serializable data types.
+///     map: FastMap<String, u64> 
+/// }
+/// ```
+/// 
+/// ### Storage Model
+/// 
+/// Account Storage State Key Format:
+/// 
+/// |Component|Key|Value (Data type) |
+/// |:---|:---|:---|
+/// |Key-Value|P, E, K| `Cell` |
+/// 
+/// - P: parent key
+/// - E: little endian bytes of edition number (u32)
+/// - K: user defined key
+/// 
+/// In account storage state, the key format is `parent key` + `edition` (u32, 4 bytes) + `user defined key`. If nested FastMap is 
+/// inserted to FastMap as a value, `parent key` would be the key of the FastMap being inserted. Actual value to be stored
+/// into world state is borsh-serialized structure of `Cell` which is either a value (bytes) or information of nested map.
+/// 
+/// ### Lazy Write
+/// 
+/// Trait `Storage` implements the `FastMap` so that data can be saved to world state
+/// 
+/// 1. after execution of action method with receiver `&mut self`; or
+/// 2. explicitly calling the setter `Self::set()`.
 pub struct FastMap<K, V> 
     where K: BorshSerialize, 
           V: Insertable {
@@ -91,7 +82,7 @@ impl<K, V> FastMap<K, V>
     /// }
     /// ```
     pub fn get(&self, key: &K) -> Option<V> {
-        let key_bs = key.clone().try_to_vec().unwrap();
+        let key_bs = key.try_to_vec().unwrap();
 
         match self.write_set.get(&key_bs) {
             Some(UpdateOperation::Delete) => return None,
@@ -158,7 +149,7 @@ impl<K, V> FastMap<K, V>
     /// ```
     pub fn remove(&mut self, key: &K) {
         let key_bs = key.try_to_vec().unwrap();
-        self.write_set.insert(key_bs.clone(), UpdateOperation::Delete);
+        self.write_set.insert(key_bs, UpdateOperation::Delete);
     }
 
     fn child_key(&self, key: Vec<u8>) -> Vec<u8> {
@@ -181,13 +172,13 @@ impl<K, V> Insertable for  FastMap<K, V>
     /// Save to world state by `FastMap`'s storage model
     fn save(&mut self, key: Vec<u8>, is_new: bool){ 
         if self.parent_key.is_empty() {
-            self.parent_key = key.clone();
+            self.parent_key = key;
         }
 
         let edition = match storage::get(&self.parent_key) {
             Some(bytes) => {
                 match Cell::deserialize(&mut bytes.as_slice()) {
-                    Ok(c) => c.edition + if is_new { 1 } else { 0 },
+                    Ok(c) => c.edition + u32::from(is_new),
                     Err(_) => 0,
                 }
             },
@@ -270,9 +261,10 @@ struct Cell {
     data: Option<Vec<u8>>
 }
 
-/// `Insertable` defines default IO implementation between data types and world state.
+/// The trait that applies to most of the data types used as value of [FastMap].
+/// Actual data stored to world state is in format of `Cell`.
 pub trait Insertable : BorshSerialize + BorshDeserialize {
-    fn edition(key: &Vec<u8>) -> u32 {
+    fn edition(key: &[u8]) -> u32 {
         storage::get(key).map_or(0, |bytes|{
             Cell::deserialize(&mut bytes.as_slice()).map_or(0, |c| c.edition)
         })
@@ -280,7 +272,7 @@ pub trait Insertable : BorshSerialize + BorshDeserialize {
 
     fn load(key: Vec<u8>) -> Option<Self> {
         let bytes = storage::get(&key)?;
-        let c =  Cell::deserialize(&mut bytes.as_slice()).map_or(None, |c| Some(c))?;
+        let c =  Cell::deserialize(&mut bytes.as_slice()).ok()?;
         let data = c.data?;
         Self::deserialize(&mut data.as_slice()).map_or(None, |s| Some(s))
     }
@@ -288,7 +280,7 @@ pub trait Insertable : BorshSerialize + BorshDeserialize {
     fn save(&mut self, key: Vec<u8>, is_new: bool) {
         let edition = storage::get(&key).map_or(0, |bytes| {
             Cell::deserialize(&mut bytes.as_slice()).map_or(0, |c| 
-                c.edition + if is_new { 1 } else { 0 }
+                c.edition + u32::from(is_new)
             )
         });
         let c = Cell { edition, data: Some(self.try_to_vec().unwrap()) };

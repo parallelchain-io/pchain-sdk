@@ -10,8 +10,8 @@
 
 use crate::imports;
 
-pub fn sha256(input :Vec<u8>) -> Vec<u8>{
-    let input = input.clone();
+/// Computes the SHA256 digest (32 bytes) of arbitrary input.
+pub fn sha256(input: Vec<u8>) -> Vec<u8>{
     let input_ptr = input.as_ptr();
 
     let mut val_ptr: u32 = 0;
@@ -23,8 +23,8 @@ pub fn sha256(input :Vec<u8>) -> Vec<u8>{
     }
 }
 
-pub fn keccak256(input :Vec<u8>) -> Vec<u8>{
-    let input = input.clone();
+/// Computes the Keccak256 digest (32 bytes) of arbitrary input.
+pub fn keccak256(input: Vec<u8>) -> Vec<u8>{
     let input_ptr = input.as_ptr();
 
     let mut val_ptr: u32 = 0;
@@ -36,8 +36,8 @@ pub fn keccak256(input :Vec<u8>) -> Vec<u8>{
     }
 }
 
-pub fn ripemd(input :Vec<u8>) -> Vec<u8>{
-    let input = input.clone();
+/// Computes the RIPEMD160 digest (20 bytes) of arbitrary input.
+pub fn ripemd(input: Vec<u8>) -> Vec<u8>{
     let input_ptr = input.as_ptr();
 
     let mut val_ptr: u32 = 0;
@@ -49,14 +49,11 @@ pub fn ripemd(input :Vec<u8>) -> Vec<u8>{
     }
 }
 
-pub fn verify_ed25519_signature(input :Vec<u8>, signature: Vec<u8>, address :Vec<u8>) -> bool {
-    let input = input.clone();
+/// Returns whether an Ed25519 signature was produced by a specified by a specified address over some specified message.
+/// Contract call fails if the input `address` or `signature` is not valid.
+pub fn verify_ed25519_signature(input: Vec<u8>, signature: Vec<u8>, address: Vec<u8>) -> bool {
     let input_ptr = input.as_ptr();
-
-    let signature = signature.clone();
     let signature_ptr = signature.as_ptr();
-
-    let address = address.clone();
     let address_ptr = address.as_ptr();
 
     let value;

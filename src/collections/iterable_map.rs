@@ -3,59 +3,48 @@
     Licensed under the Apache License, Version 2.0: http://www.apache.org/licenses/LICENSE-2.0
 */
 
-//! ## IterableMap
-//! 
-//! `IterableMap` can be a Contract Field defined in the contract struct. E.g.
-//! 
-//! ```rust
-//! #[contract]
-//! struct MyContract {
-//!     iterable_map: IterableMap<K, V>,
-//! }
-//! ```
-//! 
-//! `IterableMap` supports following operations in contract:
-//! 
-//! ```rust
-//! pub fn get(&self, key: &K) -> Option<V>
-//! pub fn get_mut(&mut self, key: &K) -> Option<&mut Iterable>
-//! pub fn insert(&mut self, key: &K, value: V) -> Option<&mut V>
-//! pub fn remove(&mut self, key: &K)
-//! pub fn keys(&self) -> IterableMapIntoKey
-//! pub fn values(&self) -> IterableMapIntoValue
-//! pub fn values_mut(&mut self) -> IterableMapIntoMutValue
-//! pub fn clear(&mut self)
-//! ```
-//! 
-//! ### Storage Model
-//! 
-//! World State Key Format:
-//! 
-//! |Component|WS Key|WS Value (Data type) |
-//! |:---|:---|:---|
-//! |Map Info|P, 0|\<MapInfoCell\>|
-//! |Key-Index|P, 1, L, K|\<KeyIndexCell\>|
-//! |Index-Key|P, 2, L, I|\<ValueCell\> (data: K)|
-//! |Index-Value|P, 3, L, I|\<ValueCell\>|
-//! 
-//! - P: parent key
-//! - L: map level
-//! - I: little endian bytes of index (u32)
-//! - K: user defined key
-//! 
-//! ### Lazy Write
-//! 
-//! Trait `Storage` implements the `IterableMap` so that data can be saved to world state
-//! 
-//! 1. after execution of action method with receiver `&mut self`; or
-//! 2. explicitly calling the setter `Self::set()`.
+//! Defines the collection struct [IterableMap].
 
 use std::{marker::PhantomData, collections::BTreeMap};
 use borsh::{BorshDeserialize, BorshSerialize};
 use crate::{storage::{self}, Storable, StoragePath};
 
-/// `IterableMap` is a contract-level data structure to provide abstraction by utilizing Get and Set operations associated with Contract Storage.
-/// It supports lazy read/write to get gas consumption to be efficient, consistent and predictable.
+/// [IterableMap] is a contract-level data structure to provide abstraction by utilizing Get and Set operations associated with Contract Storage.
+/// It supports lazy read/write on key-value tuples which can also be iterated as a vector.
+/// 
+/// ## IterableMap
+/// 
+/// `IterableMap` can be a Contract Field defined in the contract struct. E.g.
+/// 
+/// ```rust
+/// #[contract]
+/// struct MyContract {
+///     iterable_map: IterableMap<K, V>,
+/// }
+/// ```
+/// 
+/// ### Storage Model
+/// 
+/// Account Storage State Key Format:
+/// 
+/// |Component|Key|Value (Data type) |
+/// |:---|:---|:---|
+/// |Map Info|P, 0|`MapInfoCell`|
+/// |Key-Index|P, 1, L, K|`KeyIndexCell`|
+/// |Index-Key|P, 2, L, I|`ValueCell` (data: K)|
+/// |Index-Value|P, 3, L, I|`ValueCell`|
+/// 
+/// - P: parent key
+/// - L: map level
+/// - I: little endian bytes of index (u32)
+/// - K: user defined key
+/// 
+/// ### Lazy Write
+/// 
+/// Trait `Storage` implements the `IterableMap` so that data can be saved to world state
+/// 
+/// 1. after execution of action method with receiver `&mut self`; or
+/// 2. explicitly calling the setter `Self::set()`.
 #[derive(Clone)]
 pub struct IterableMap<K, V> 
     where K: BorshSerialize + BorshDeserialize,
@@ -102,7 +91,7 @@ impl<K, V> IterableMap<K, V>
         match self.write_set.get(key_bs) {
             Some(UpdateOperation::Delete) => { None }, // deleted key in cache
             Some(UpdateOperation::Insert(value, is_new_record)) => { Some((value.clone(), *is_new_record)) }, // found key in cache
-            None=> { self.get_from_ws_by_key(&key_bs).map(|v| (v, false)) } // get from world-state
+            None=> { self.get_from_ws_by_key(key_bs).map(|v| (v, false)) } // get from world-state
         }
     }
 
@@ -126,7 +115,7 @@ impl<K, V> IterableMap<K, V>
     fn get_mut_inner(&mut self, key_bs: &Vec<u8>) -> Option<&mut V> {
         match self.get_inner(key_bs) {
             Some((iterable, is_new_record)) => {
-                self.insert_inner(&key_bs, iterable, is_new_record);
+                self.insert_inner(key_bs, iterable, is_new_record);
                 match self.write_set.get_mut(key_bs) {
                     Some(UpdateOperation::Insert(mut_value, _)) => Some(mut_value),
                     _=> None
@@ -240,7 +229,7 @@ impl<K, V> IterableMap<K, V>
 
     /// Get the index from Key-Index, given user-defined Key.
     /// Returns None if key is not found in Key-Index
-    fn get_index(&self, key: &Vec<u8> , level: u32) -> Option<u32> {
+    fn get_index(&self, key: &[u8] , level: u32) -> Option<u32> {
         let ws_key_index = self.wskey_key_index(key, level);
         KeyIndexCell::load(ws_key_index).map(|ki| ki.index)
     }
@@ -250,7 +239,7 @@ impl<K, V> IterableMap<K, V>
     /// Steps:
     /// 1. get the index from Key-Index
     /// 2. get the value from Index-Value
-    fn get_from_ws_by_key(&self, key: &Vec<u8>) -> Option<V> {
+    fn get_from_ws_by_key(&self, key: &[u8]) -> Option<V> {
         let map_info_cell = self.get_map_info();
         let ws_index = self.get_index(key, map_info_cell.level);
         let ws_key_index_value = match ws_index {
@@ -262,7 +251,7 @@ impl<K, V> IterableMap<K, V>
 
     /// Check if the user-defined key has been used. It could be alive or already deleted.
     /// If it is used, new data to insert should reuse the cell (overriding).
-    fn is_key_used(&self, key: &Vec<u8>) -> bool {
+    fn is_key_used(&self, key: &[u8]) -> bool {
         // search the cache with last update related to this key
         let map_info_cell = self.get_map_info();
         if map_info_cell.sequence == 0 { return false } // no elements
@@ -275,7 +264,7 @@ impl<K, V> IterableMap<K, V>
 
     /// Add value to world state , given user-defined key and current value of Sequence.
     /// Sequence will be increased afterwards.
-    fn add_to_ws(&self, key: &Vec<u8>, level: u32, sequence: u32, value: V) {
+    fn add_to_ws(&self, key: &[u8], level: u32, sequence: u32, value: V) {
         // 1. set sequence += 1
         let ws_seq = self.wskey_map_info();
         MapInfoCell {
@@ -291,7 +280,7 @@ impl<K, V> IterableMap<K, V>
 
         // 3. set index (sequence) to key
         let ws_index_key = self.wskey_index_key(level, &sequence);
-        key.clone().save(ws_index_key);
+        key.to_owned().save(ws_index_key);
         
         // 4. set to index-value (sequence)
         let ws_index_value = self.wskey_index_value(level, &sequence);
@@ -300,49 +289,43 @@ impl<K, V> IterableMap<K, V>
     }
 
     /// Lookup Key-Index and Index-Value. Update key and value to world state.
-    fn set_to_ws(&self, key: &Vec<u8>, level: u32, value: V) {
-        match self.get_index(key, level) {
-            Some(index) => {
-                // 1. set index to key
-                let ws_index_key = self.wskey_index_key(level, &index);
-                key.clone().save(ws_index_key);
+    fn set_to_ws(&self, key: &[u8], level: u32, value: V) {
+        if let Some(index) = self.get_index(key, level) {
+            // 1. set index to key
+            let ws_index_key = self.wskey_index_key(level, &index);
+            key.to_owned().save(ws_index_key);
 
-                // 2. set to index-value
-                let ws_index_value = self.wskey_index_value(level, &index);
-                let mut value = value;
-                value.save(ws_index_value);
-            }
-            None => {}
+            // 2. set to index-value
+            let ws_index_value = self.wskey_index_value(level, &index);
+            let mut value = value;
+            value.save(ws_index_value);
         }
     }
 
-    fn remove_from_ws(&self, key: &Vec<u8>, level: u32) {
-        match self.get_index(key, level) {
-            Some(index) => {
-                // 1. set Index-Key to None
-                let ws_index_key = self.wskey_index_key(level, &index);
-                Vec::<u8>::delete(ws_index_key);
+    fn remove_from_ws(&self, key: &[u8], level: u32) {
+        if let Some(index) = self.get_index(key, level) {
+            // 1. set Index-Key to None
+            let ws_index_key = self.wskey_index_key(level, &index);
+            Vec::<u8>::delete(ws_index_key);
 
-                // 2. set Index-Value to None
-                let ws_index_value = self.wskey_index_value(level, &index);
-                V::delete(ws_index_value.clone());
+            // 2. set Index-Value to None
+            let ws_index_value = self.wskey_index_value(level, &index);
+            V::delete(ws_index_value.clone());
 
-                // 2a. if it is a nested map, set Sequence of the nested map to 0
-                if V::is_map(ws_index_value) {
-                    self.new_ws_map_info();
-                }
+            // 2a. if it is a nested map, set Sequence of the nested map to 0
+            if V::is_map(ws_index_value) {
+                self.new_ws_map_info();
             }
-            None => {} 
         }
     }
 
-    /// World State Key format for Map Information.
+    /// Account Storage State Key format for Map Information.
     /// Map Information consists of:
     /// 1. level
     /// 2. sequence
     /// 
-    /// - WS Key: [P, 0]
-    /// - WS Value Data Type: MapInfoCell
+    /// - Key: [P, 0]
+    /// - Value Data Type: MapInfoCell
     /// 
     /// where
     ///  - P: Parent Key
@@ -353,16 +336,16 @@ impl<K, V> IterableMap<K, V>
         ].concat()
     }
 
-    /// World State Key format for Key-Index
+    /// Account Storage State Key format for Key-Index
     /// 
-    /// - WS Key: [P, 1, L, K]
-    /// - WS Value Data Type: KeyIndexCell
+    /// - Key: [P, 1, L, K]
+    /// - Value Data Type: KeyIndexCell
     /// 
     /// where
     ///  - P: Parent Key
     ///  - L: Map Level
     ///  - K: User defined Key
-    fn wskey_key_index(&self, key: &Vec<u8>, level: u32) -> Vec<u8> {
+    fn wskey_key_index(&self, key: &[u8], level: u32) -> Vec<u8> {
         [
             self.parent_key.to_vec(),
             [1u8].to_vec(),
@@ -371,10 +354,10 @@ impl<K, V> IterableMap<K, V>
         ].concat()
     }
 
-    /// World State Key format for Index-Key
+    /// Account Storage State Key format for Index-Key
     /// 
-    /// - WS Key: [P, 2, L, I]
-    /// - WS Value Data Type: ValueCell (data: K)
+    /// - Key: [P, 2, L, I]
+    /// - Value Data Type: ValueCell (data: K)
     /// 
     /// where
     ///  - P: Parent Key
@@ -390,10 +373,10 @@ impl<K, V> IterableMap<K, V>
         ].concat()
     }
 
-    /// World State Key format for Index-Value
+    /// Account Storage State Key format for Index-Value
     /// 
-    /// - WS Key: [P, 3, L, I]
-    /// - WS Value Data Type: ValueCell
+    /// - Key: [P, 3, L, I]
+    /// - Value Data Type: ValueCell
     /// 
     /// where
     ///  - P: Parent Key
@@ -430,13 +413,13 @@ impl<K, V> Iterable for IterableMap<K, V>
             let map_info_cell = self.get_map_info();
             match ops {
                 UpdateOperation::Insert(value, true) => {
-                    self.add_to_ws(&key, map_info_cell.level, map_info_cell.sequence, value.clone());
+                    self.add_to_ws(key, map_info_cell.level, map_info_cell.sequence, value.clone());
                 },
                 UpdateOperation::Insert(value, false) => {
-                    self.set_to_ws(&key, map_info_cell.level, value.clone());
+                    self.set_to_ws(key, map_info_cell.level, value.clone());
                 },
                 UpdateOperation::Delete => {
-                    self.remove_from_ws(&key, map_info_cell.level);
+                    self.remove_from_ws(key, map_info_cell.level);
                 },
             }
         });
@@ -484,7 +467,7 @@ impl<K, V> BorshDeserialize for IterableMap<K, V>
     }
 }
 
-/// `IterableMapIntoKey` is return data type for `IterableMap::keys()`
+/// Return data type for `IterableMap::keys()`
 pub struct IterableMapKeys<'a, K, V>
     where K: BorshSerialize + BorshDeserialize,
           V: Iterable + Clone {
@@ -511,12 +494,9 @@ impl<'a, K, V> Iterator for IterableMapKeys<'a, K, V>
                 return None
             } else {
                 let ws_index_key = self.iterable_map.wskey_index_key(self.level, &(self.idx as u32));
-                match Vec::<u8>::load(ws_index_key) {
-                    Some(bytes) => {
-                        self.idx += 1;
-                        return Some(K::deserialize(&mut bytes.as_slice()).unwrap())
-                    }
-                    None => {}
+                if let Some(bytes) = Vec::<u8>::load(ws_index_key) {
+                    self.idx += 1;
+                    return Some(K::deserialize(&mut bytes.as_slice()).unwrap())
                 }
             }
             self.idx += 1;
@@ -524,7 +504,7 @@ impl<'a, K, V> Iterator for IterableMapKeys<'a, K, V>
     }
 }
 
-/// `IterableMapIntoValue` is return data type for `IterableMap::values()`
+/// Return data type for `IterableMap::values()`
 pub struct IterableMapValues<'a, K, V>
     where K: BorshSerialize + BorshDeserialize,
           V: Iterable + Clone {
@@ -558,14 +538,11 @@ impl<'a, K, V> Iterator for IterableMapValues<'a, K, V>
             } else {
                 // keys that can be found in world state
                 let ws_index_key = self.iterable_map.wskey_index_key(self.level, &(self.idx as u32));
-                match Vec::<u8>::load(ws_index_key) {
-                    Some(bytes) => {
-                        if let Some((value, _)) = self.iterable_map.get_inner(&bytes) {
-                            self.idx += 1;
-                            return Some(value);
-                        }
-                    },
-                    None => {},
+                if let Some(bytes) = Vec::<u8>::load(ws_index_key) {
+                    if let Some((value, _)) = self.iterable_map.get_inner(&bytes) {
+                        self.idx += 1;
+                        return Some(value);
+                    }
                 }
             }
             self.idx += 1;
@@ -573,7 +550,7 @@ impl<'a, K, V> Iterator for IterableMapValues<'a, K, V>
     }
 }
 
-/// `IterableMapIntoMutValue` is mutable iterator created by `IterableMap::values_mut()`.
+/// Mutable iterator created by `IterableMap::values_mut()`
 pub struct IterableMapValuesMut<'a, K, V> 
     where K: BorshSerialize + BorshDeserialize,
           V: Iterable + Clone {
@@ -610,17 +587,14 @@ impl<'a, K, V> Iterator for IterableMapValuesMut<'a, K, V>
             } else {
                 // keys that can be found in world state
                 let ws_index_key = self.iterable_map.wskey_index_key(self.level, &(self.idx as u32));
-                match Vec::<u8>::load(ws_index_key) {
-                    Some(bytes) => {
-                        if let Some(mut_value) = self.iterable_map.get_mut_inner(&bytes) {
-                            self.idx += 1;
-                            return Some(unsafe{
-                                let r = mut_value as * const V;
-                                &mut *(r as *mut V)
-                            });
-                        }
+                if let Some(bytes) = Vec::<u8>::load(ws_index_key) {
+                    if let Some(mut_value) = self.iterable_map.get_mut_inner(&bytes) {
+                        self.idx += 1;
+                        return Some(unsafe{
+                            let r = mut_value as * const V;
+                            &mut *(r as *mut V)
+                        });
                     }
-                    None => {}
                 }
             }
             self.idx += 1;
@@ -628,7 +602,7 @@ impl<'a, K, V> Iterator for IterableMapValuesMut<'a, K, V>
     }
 }
 
-/// Iterable is default trait that applies to most of the data types used as value of `IterableMap`.
+/// The trait that applies to most of the data types used as value of `IterableMap`.
 /// Actual data stored to world state is in format of `ValueCell`.
 pub trait Iterable : BorshSerialize + BorshDeserialize {
     fn is_map(key: Vec<u8>) -> bool {
@@ -639,7 +613,7 @@ pub trait Iterable : BorshSerialize + BorshDeserialize {
     
     fn load(key: Vec<u8>) -> Option<Self> {
         let bytes = storage::get(&key)?;
-        let c = ValueCell::deserialize(&mut bytes.as_slice()).map_or(None, |c| Some(c))?;
+        let c = ValueCell::deserialize(&mut bytes.as_slice()).ok()?;
         let data = c.data?;
         Self::deserialize(&mut data.as_slice()).map_or(None, |s| Some(s))
     }
@@ -697,7 +671,7 @@ impl Iterable for MapInfoCell {
     fn delete(_key: Vec<u8>) { unreachable!() }
 }
 
-/// KeyIndexCell defines the data stored for Key-Index mapping in storage model of `IterableMap`
+/// KeyIndexCell defines the data stored for Key-Index mapping in storage model of [IterableMap]
 #[derive(BorshSerialize, BorshDeserialize)]
 struct KeyIndexCell {
     // index of Key-Index mapping. It is part of prefix of the key to child element.
@@ -707,7 +681,7 @@ struct KeyIndexCell {
 impl Iterable for KeyIndexCell {
     fn load(key: Vec<u8>) -> Option<Self> {
         let bytes = storage::get(&key)?;
-        KeyIndexCell::deserialize(&mut bytes.as_slice()).map_or(None, |c| Some(c))
+        KeyIndexCell::deserialize(&mut bytes.as_slice()).ok()
     }
     fn save(&mut self, key: Vec<u8>) { storage::set(&key, self.try_to_vec().unwrap().as_slice()) }
     fn delete(_key: Vec<u8>) { unreachable!() }

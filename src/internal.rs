@@ -49,7 +49,7 @@ pub fn call_untyped(contract_address: PublicAddress, method_name: &str, argument
     let call_command = pchain_types::blockchain::Command::Call( CallInput{ 
         target: contract_address, 
         method: method_name.to_string(), 
-        arguments: <Vec<Vec<u8>>>::deserialize(&arguments).map_or(None, |args| Some(args)), 
+        arguments: <Vec<Vec<u8>>>::deserialize(&arguments).ok(), 
         amount: if value > 0 { Some(value) } else { None }
     }).serialize();
 

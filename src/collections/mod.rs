@@ -7,18 +7,18 @@
 //! They are designed to get gas consumption to be efficient, consistent and predictable.
 //! 
 //! Collections:
-//! - [Vector](vector)
-//! - [FastMap](fast_map)
-//! - [IterableMap](iterable_map)
+//! - [Vector]
+//! - [FastMap]
+//! - [IterableMap]
 
 pub(crate) mod vector;
 #[allow(unused_imports)]
-pub use self::vector::*;
+pub use vector::*;
 
 pub(crate) mod fast_map;
 #[allow(unused_imports)]
-pub use self::fast_map::*;
+pub use fast_map::*;
 
 pub(crate) mod iterable_map;
 #[allow(unused_imports)]
-pub use self::iterable_map::*;
+pub use iterable_map::*;

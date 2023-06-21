@@ -244,10 +244,7 @@ fn generate_contract_methods(impl_name :&Ident, ipl: &ItemImpl) -> Option<proc_m
                 };
 
                 // create method body based input arguments
-                let has_typed_args = e.sig.inputs.iter().any(|f| match &f {
-                    syn::FnArg::Typed(_) => true,
-                    _=> false
-                });
+                let has_typed_args = e.sig.inputs.iter().any(|f| matches!(f, syn::FnArg::Typed(_)));
                 let code_init_multiple_args = if has_typed_args {
                     quote!{ let multi_args = ctx.get_multiple_arguments(); }
                 } else { quote!{} };
@@ -332,7 +329,7 @@ impl ContractMethodAnalysis for ImplItemMethod {
     fn is_mutable(&self) -> bool {
         // mutable method with &mut self as receiver
         let fn_args = &self.sig.inputs;
-        if fn_args.len() < 1 { return false; }
+        if fn_args.is_empty() { return false; }
         match &fn_args[0] {
             syn::FnArg::Receiver(e) =>{
                 e.mutability.is_some()
@@ -343,7 +340,7 @@ impl ContractMethodAnalysis for ImplItemMethod {
     fn is_immutable(&self) -> bool {
         // immutable method with &self as receiver
         let fn_args = &self.sig.inputs;
-        if fn_args.len() < 1 { return false; }
+        if fn_args.is_empty() { return false; }
         match &fn_args[0] {
             syn::FnArg::Receiver(e) =>{
                 e.mutability.is_none()
@@ -363,7 +360,7 @@ impl ContractMethodAnalysis for ImplItemMethod {
         self.attrs.iter().any(|attr|{
             attr.parse_meta().map_or(false, |meta| {
                 meta.path().get_ident().map_or(false, |ident| {
-                    ident.to_string() == "call".to_string()
+                    *ident == *"call"
                 })
             })
         })

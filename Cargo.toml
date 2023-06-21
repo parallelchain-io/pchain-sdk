@@ -14,4 +14,4 @@ doctest = false
 [dependencies]
 borsh = "=0.10.2"
 pchain-types = "=0.4.3"
-pchain-sdk-macros = { path = "macros", version = "0.4" }
+pchain-sdk-macros = "=0.4.2"
