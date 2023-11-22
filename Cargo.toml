@@ -1,6 +1,6 @@
 [package]
 name = "pchain-sdk"
-version = "0.4.2"
+version = "0.5.0"
 authors = ["ParallelChain Lab <info@parallelchain.io>"]
 edition = "2021"
 description = "The ParallelChain Smart Contract Development Kit (SDK)."
@@ -13,5 +13,5 @@ doctest = false
 
 [dependencies]
 borsh = "=0.10.2"
-pchain-types = "=0.4.3"
-pchain-sdk-macros = "=0.4.2"
+pchain-types = { git = "https://github.com/parallelchain-io/pchain-types-rust", branch = "protocol_v0.5" }
+pchain-sdk-macros = { path = "./macros" }

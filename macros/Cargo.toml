@@ -1,6 +1,6 @@
 [package]
 name = "pchain-sdk-macros"
-version = "0.4.2"
+version = "0.5.0"
 authors = ["ParallelChain Lab <info@parallelchain.io>"]
 edition = "2021"
 description = "parallelchain-sdk: macro implementation for SDK"
@@ -17,5 +17,5 @@ snakecase = "0.1"
 syn = {version = "1.0", features = ["fold", "full"]}
 quote = "1.0"
 proc-macro2 = "1.0"
-pchain-types = "=0.4.3"
+pchain-types = { git = "https://github.com/parallelchain-io/pchain-types-rust", branch = "protocol_v0.5" }
 base64url = "0.1.0"
