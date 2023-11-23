@@ -17,5 +17,5 @@ snakecase = "0.1"
 syn = {version = "1.0", features = ["fold", "full"]}
 quote = "1.0"
 proc-macro2 = "1.0"
-pchain-types = "=0.4.3"
+pchain-types = "0.4.3"
 base64url = "0.1.0"

@@ -12,6 +12,6 @@ repository = "https://github.com/parallelchain-io/parallelchain-sdk"
 doctest = false
 
 [dependencies]
-borsh = "=0.10.2"
-pchain-types = "=0.4.3"
-pchain-sdk-macros = "=0.4.2"
+borsh = "0.10.2"
+pchain-types = "0.4.3"
+pchain-sdk-macros = "0.4.2"
