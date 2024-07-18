@@ -1,45 +1,58 @@
 # ParallelChain Mainnet Contract SDK
 
-The ParallelChain Mainnet Contract SDK (pchain-sdk) provides Rust structs, functions, types, and macros that aid with the development of smart contracts executable in WebAssembly (WASM) engines implementing the ParallelChain Mainnet Contract Binary Interface (CBI) Subprotocol.  
+The ParallelChain Mainnet Contract SDK (`pchain-sdk`) provides Rust structs, functions, types, and macros that aid with the development of smart contracts executable in WebAssembly (WASM) engines implementing the ParallelChain Mainnet Contract Binary Interface (CBI) Subprotocol.  
 
 Contracts are the run-time programmability mechanism of ParallelChain Mainnet networks. They allow users (Account owners) to implement arbitrary logic in a global, decentralized, and Byzantine Fault Tolerant replicated state machine to support their most business-critical applications. 
 
-Theoretically, any WebAssembly (WASM) module that implements the CBI Subprotocol can be deployed onto a ParallelChain Mainnet blockchain. Practically, however, all developers (except perhaps those who like to experiment, or that would like to stretch the limits of the system) will want to use the types and macros in this `pchain-sdk` to write a Contract in Rust, and the commands in `pchain-compile` to compile the Rust source code into WASM bytecode that can be included in a Deploy Transaction. 
+Theoretically, any WebAssembly (WASM) module that implements the CBI Subprotocol can be deployed onto a ParallelChain Mainnet blockchain. Practically, however, all developers (except perhaps those who like to experiment, or that would like to stretch the limits of the system) will want to use the types and macros in this `pchain-sdk` to write a Contract in Rust, and the commands in `pchain-compile` to compile the Rust source code into WASM bytecode that can be included in a Deploy command. 
 
 ## The Contract Programming Model
 
-pchain-sdk enables developers to write Smart Contracts in an intuitive and readable style we call "The Contract Programming Model". The SDK's macros transparently generate lower-level 'boilerplate' code for you, so that you can focus on writing the business logic of your application.
+`pchain-sdk` enables developers to write Smart Contracts in an intuitive and readable style we call "The Contract Programming Model". The SDK's macros transparently generate lower-level 'boilerplate' code for you, so that you can focus on writing the business logic of your application.
 
-The Contract Programming Model is inspired by Object-Oriented Programming (OOP). In the Model, a Contract can be thought of as a Rust struct that controls access to persistent Storage. Accounts interact with Contracts by submitting Transaction with Call Command to invoke methods of a contract, or just Methods for short. The following two sections elaborate on the two essential concepts of programming with the Contract Programming Model: Contract Methods, and Contract Storage.
+The Contract Programming Model is inspired by Object-Oriented Programming (OOP). In the Model, a Contract can be thought of as a Rust struct that controls access to persistent Storage. Accounts interact with Contracts by submitting Transactions with Call commands to invoke Methods of contracts. 
+
+## Contract struct
+
+```rust
+#[contract]
+struct PrinceTheDog {
+    age: u8,
+    breed: String,
+    hungry: bool,
+    toy: DogToy
+}
+```
 
 ## Contract Methods
 
-The Model defines methods with macro `#[call]` as Contract Methods, each corresponding to a method that is callable to a Call Command in the CBI Subprotocol.
-
-In order to produce to appropriate CBI Exports Set bindings that ultimately allow Methods to be called from the outside world, you must write Method definitions inside an `impl Contract` statement marked with the `#[contract_methods]` macro, as illustrated in the following examples.
+Marking an impl block for a contract struct with the `#[contract_methods]` attribute macro allows us to define contract methods in the impl block. Not every function defined in the impl block will become a contract method, rather, only those marked with the `#[call]` attribute macro will be. Functions not marked with `call` can still be used internally, they just won't be directly callable from a Call command or through the `view` RPC.
 
 ```rust
 #[contract_methods]
 impl PrinceTheDog {
     #[call]
-    fn eat_food(&mut self, food: DogFood) {
-        ...
+    pub fn eat_food(&mut self, food: DogFood) -> Bark {
+        /* method body omitted */
     }
 }
 ```
 
-Methods may mutate Contract Storage. Note however, that (as specified in the Transaction Subprotocol) mutations to Contract Storage made in a Call Transaction only get applied if the Transaction is Successful (e.g., the Transaction must exit with sufficient gas, must have not panicked during execution, etc.).
+### Accepting parameters and returning values
 
-A function can be called if and only if:
-1. The macro `#[call]` is added above the function declaration.
-2. Its (zero or more) other arguments implement `BorshDeserialize`.
-3. Its return value implements `BorshSerialize`, or it does not have a return value.
+Contract methods can accept parameters (included in a Call command in the `arguments` field) and return values (included in a command receipt in the `return_value` field). For example, the `eat_food` method in the above example accepts a single parameter (of type `DogFood`) and returns a single value (of type `Bark`). 
 
-## Accepting parameters and returning values
+Minimally, in order for a method's function signature to be valid, all arguments must implement [`BorshDeserialize`](https://docs.rs/borsh/latest/borsh/de/trait.BorshDeserialize.html), and all return values must implement `BorshSerialize`. 
 
-Some of the code snippets provided as examples in this document depict Contract Methods that take in function arguments (besides a borrow of the Contract struct) and/or return a value. In order for a Contract to receive arguments from and return values to the 'outside world' (callers), both Contract and caller need to agree on a serialization format.
+In practice, however, arguments should also implement `BorshSerialize`, and return values should also implement `BorshDeserialize`, because, respectively:
+- The `arguments` field of the Call command has type `Option<Vec<Vec<u8>>>`, so each non-self method argument has to be borsh-serialized into `Vec<u8>` in order to be placed in a Call command.
+- The `return_value` field of a command receipt has type `Vec<u8>`, so code consuming the return value must be able deserialize the bytes vector into the specific return value type in order to do anything really useful on it.
 
-`pchain-sdk` expects callers to serialize Method arguments using the [borsh](https://github.com/near/borsh) serialization standard, and generates code to serialize values into borsh for inclusion in a Transaction's Receipt. To be precise, Transaction Command Call specify the Contract Method to call and provide the arguments for the call by including a borsh-serialized data structure `Option<Vec<Vec<u8>>>` in its `arguments` field, and contracts include a borsh-serialized `ContractMethodOutput` struct. The former type is defined in `pchain-types`, while the latter is defined in `pchain-sdk`. In the future, we plan to move both into the SDK. 
+### Method receivers
+
+A contract method may have a `&self` receiver, a `&mut self` receiver, or no receiver at all. It cannot have a `self` receiver. The body of the contract method can use the fields of the contract just like a regular Rust function with the same kind of receiver. This means that one can only mutate the contract's fields through the receiver if the receiver is `&mut self`.
+
+Note that having a `&self` receiver or no receiver at all only prevents mutations from being done from the receiver, it doesn't prevent mutations from being done generally. So for example, a method with a `&self` receiver could still mutate the world state by calling `pchain_sdk::storage::set`.
 
 ## Contract Storage
 
