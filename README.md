@@ -14,6 +14,8 @@ The Contract Programming Model is inspired by Object-Oriented Programming (OOP).
 
 ## Contract struct
 
+The `#[contract]` attribute macro turns any Rust struct into a Contract struct, as long as all of the struct's fields implement the `Storable` trait.
+
 ```rust
 #[contract]
 struct PrinceTheDog {
@@ -23,6 +25,17 @@ struct PrinceTheDog {
     toy: DogToy
 }
 ```
+
+Out of the box, types that implement `Storable` includes all Rust primitive types, as well as as other commonly used types like `Option<T>`, `Result<T>`, `Vec<T>`, etc. In addition, structs defined by the developer can be made to implement Storage by applying the `#[contract_field]` macro on their definitions, as long as all of *their* fields implement Storable. For example:
+
+```rust
+#[contract_field]
+struct DogToy {
+    fun_score: u8,
+}
+```
+
+Fields are the basic persistence mechanism of a contract. The SDK transparently generates code that loads all fields from the contract account's storage trie before the execution of contract methods, *and* saves all fields into the contract account's storage trie after execution finishes.
 
 ## Contract Methods
 
@@ -42,9 +55,9 @@ impl PrinceTheDog {
 
 Contract methods can accept parameters (included in a Call command in the `arguments` field) and return values (included in a command receipt in the `return_value` field). For example, the `eat_food` method in the above example accepts a single parameter (of type `DogFood`) and returns a single value (of type `Bark`). 
 
-Minimally, in order for a method's function signature to be valid, all arguments must implement [`BorshDeserialize`](https://docs.rs/borsh/latest/borsh/de/trait.BorshDeserialize.html), and all return values must implement `BorshSerialize`. 
+Minimally, in order for a method's function signature to be valid, all arguments must implement `BorshDeserialize`, and all return values must implement `BorshSerialize`. 
 
-In practice, however, arguments should also implement `BorshSerialize`, and return values should also implement `BorshDeserialize`, because, respectively:
+In practice, however, arguments should also implement `BorshSerialize`, and return values should also implement `BorshDeserialize`, because respectively:
 - The `arguments` field of the Call command has type `Option<Vec<Vec<u8>>>`, so each non-self method argument has to be borsh-serialized into `Vec<u8>` in order to be placed in a Call command.
 - The `return_value` field of a command receipt has type `Vec<u8>`, so code consuming the return value must be able deserialize the bytes vector into the specific return value type in order to do anything really useful on it.
 
@@ -54,32 +67,31 @@ A contract method may have a `&self` receiver, a `&mut self` receiver, or no rec
 
 Note that having a `&self` receiver or no receiver at all only prevents mutations from being done from the receiver, it doesn't prevent mutations from being done generally. So for example, a method with a `&self` receiver could still mutate the world state by calling `pchain_sdk::storage::set`.
 
-## Contract Storage
+## More about Contract Storage
 
-Contracts can use Storage to persist data between calls. The simplest way to read and write data into Storage is to add fields to the Contract struct:
+### Cacher
+
+As explained previously, by default, the SDK loads *all* of a contract's fields from storage before executing a method, and saves all of them into storage after the execution completes.
+
+This default could be ideal for contracts that do not keep much in storage, or whose methods *always* read and write into every field in every call, but will in general result in contract calls that are not very gas-efficient.
+
 ```rust
 #[contract]
 struct PrinceTheDog {
-    age: u8, 
-    breed: String,
-    hungry: bool,
-    toy: DogToy,
+    // `Cacher` can wrap around any type that implements `Storable`.
+    age: Cacher<u8>,
+    breed: Cacher<String>,
+    hungry: Cacher<bool>,
+
+    // `Cacher` can wrap around `DogToy` directly. There's no need to wrap it
+    // around all of `DogToy`'s fields individually.
+    toy: Cacher<DogToy> 
 }
 ```
 
-The `#[contract]` macro transparently generates code that loads all Contract struct's fields from Storage before the execution of contract methods. All types that implement the `Storage` trait can be used as a Contract field. Out of the box, this includes all Rust primitive types, as well as other commonly used types like `Option<T>`, `Result<T>`, `Vec<T>`, etc. In addition, structs defined by the developer can be made to implement `Storage` by applying the `#[contract_field]` macro on their definitions, if all *their* fields implement Storage:
-```rust
-#[contract_field]
-struct DogToy {
-    ...
-}
-```
+Wrapping a contract field with the `Cacher<T>` struct (`pchain_sdk::storage::Cacher`) overrides this default behavior. Fields wrapped inside a `Cacher` are instead loaded "lazily", i.e., only if the specific call accesses them. In addition, `Cacher<T>` implements `Deref<Target=T>`, and so can be used in much of the same way as `T` with little extra syntax.
 
-### Storage and Collections
-
-Because Storage is so gas-expensive, loading all Contract's fields before Method execution and writing them all into Storage after execution typically results in Contracts that are not very economical. For Contracts that do not keep much in Storage, or whose Methods *always* read and write into most fields, this may be okay, or even ideal, however, some applications cannot avoid keeping a lot of on-chain state, and for these applications eagerly loading and saving fields in every call may be unacceptably expensive.
-
-To solve this, the SDK includes a `pchain_sdk::collections` module. All of the types defined in this module 'lazily' load Storage: they only incur a read or write gas cost when the exact item in the collection is read from or written to. They also offer an API that can make working with large collections of data more convenient.
+### Collections
 
 ```rust
 #[contract]
@@ -101,6 +113,8 @@ Lazily stores a list of items in `Storage`. Vector implements `Index`, `IndexMut
 Collections include two types that store statically typed mapping between keys and values. The difference between these two types is that IterableMap is, as its name suggests, iterable. i.e., it has the standard library's HashMap's `keys`, `iter`, and `values` sets of methods. This functionality comes at the cost of storing slightly more data in Storage than FastMap. Both types function identically otherwise, down to being able to nest like-Maps together (e.g., `FastMap<T, FastMap<K, V>>`, but *not* `FastMap<T, IterableMap<K, V>>`).
 
 You should use IterableMap if your application absolutely needs to iterate through stored items, otherwise, use FastMap.
+
+### Setting and getting directly
 
 ## Accessing information about the Blockchain
 
