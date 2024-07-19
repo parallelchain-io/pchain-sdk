@@ -82,9 +82,6 @@ struct PrinceTheDog {
     age: Cacher<u8>,
     breed: Cacher<String>,
     hungry: Cacher<bool>,
-
-    // `Cacher` can wrap around `DogToy` directly. There's no need to wrap it
-    // around all of `DogToy`'s fields individually.
     toy: Cacher<DogToy> 
 }
 ```
@@ -93,26 +90,21 @@ Wrapping a contract field with the `Cacher<T>` struct (`pchain_sdk::storage::Cac
 
 ### Collections
 
-```rust
-#[contract]
-struct PrinceTheDog {
-    nicknames: Vector<String>
-}
-```
+Some fields will contain types (e.g., list types) that are comprised of a large "collection" of parts. Accesses to such collection fields will be inefficient even if they are wrapped inside `Cacher`, because `Cacher` loads *entire* fields. Efficient access of collections, therefore, require types that enable lazy loading of *parts* of fields, not only entire fields like `Cacher`.
 
-#### <u>Cacher (`Cacher<T>`)</u>
+The `collections` module (`pchain_sdk::collections`) provide exactly these kinds of types.  
 
-Wraps over any non-collections type that implements `Storage` and makes them lazy (all `collections` types are already lazy without Cacher). Cacher implements `Deref`, so `Cacher<T>` can be used *almost* everywhere `T` can be used without any special syntax. 
+#### Lazy lists: `Vector<T>`
 
-#### <u>Vector (`Vector<T>`)</u>
+Vector (`Vector<T>`) lazily stores a list of items in storage. Vector implements `Index`, `IndexMut`, and has an `iter` method, so most of the things you can do with `std::vec::Vec`, you can probably do with `Vector` too.
 
-Lazily stores a list of items in `Storage`. Vector implements `Index`, `IndexMut`, and has an `iter` method, so most of the things you can do with `std::vec::Vec`, you can probably do with `Vector` too.
+#### Lazy maps: `FastMap<K, V>` and `IterableMap<K, V>`
 
-#### <u>Maps (`FastMap<K, V>` and `IterableMap<K, V>`)</u>
+Collections include two types that store statically typed mapping between keys and values. The difference between these two types is that `IterableMap` is, as its name suggests, iterable. i.e., it has the standard library's HashMap's `keys`, `iter`, and `values` sets of methods. This functionality comes at the cost of storing slightly more data in Storage than `FastMap`. 
 
-Collections include two types that store statically typed mapping between keys and values. The difference between these two types is that IterableMap is, as its name suggests, iterable. i.e., it has the standard library's HashMap's `keys`, `iter`, and `values` sets of methods. This functionality comes at the cost of storing slightly more data in Storage than FastMap. Both types function identically otherwise, down to being able to nest like-Maps together (e.g., `FastMap<T, FastMap<K, V>>`, but *not* `FastMap<T, IterableMap<K, V>>`).
+Like-typed maps can be nested together, but unlike-maps cannot, so for example `FastMap<T, FastMap<K, V>>` is permissible, but `FastMap<T, IterableMap<K, V>>` or `IterableMap<T, FastMap<K, V>>` are not. 
 
-You should use IterableMap if your application absolutely needs to iterate through stored items, otherwise, use FastMap.
+You should use `IterableMap` if your application needs to iterate through stored items, otherwise, use `FastMap`.
 
 ### Setting and getting directly
 
