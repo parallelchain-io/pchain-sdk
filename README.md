@@ -100,26 +100,42 @@ Vector (`Vector<T>`) lazily stores a list of items in storage. Vector implements
 
 #### Lazy maps: `FastMap<K, V>` and `IterableMap<K, V>`
 
-Collections include two types that store statically typed mapping between keys and values. The difference between these two types is that `IterableMap` is, as its name suggests, iterable. i.e., it has the standard library's HashMap's `keys`, `iter`, and `values` sets of methods. This functionality comes at the cost of storing slightly more data in Storage than `FastMap`. 
+Collections come with two types that store statically typed mappings between keys and values. The difference between these two types is that `IterableMap` is, as its name suggests, iterable. i.e., it has the standard library's HashMap's `keys`, `iter`, and `values` sets of methods. This functionality comes at the cost of storing slightly more data in Storage than `FastMap`. 
 
 Like-typed maps can be nested together, but unlike-maps cannot, so for example `FastMap<T, FastMap<K, V>>` is permissible, but `FastMap<T, IterableMap<K, V>>` or `IterableMap<T, FastMap<K, V>>` are not. 
 
 You should use `IterableMap` if your application needs to iterate through stored items, otherwise, use `FastMap`.
 
-### Setting and getting directly
+## Internal commands
+
+### Transfers
+
+
+
+### Cross-contract calls
+
+Contracts can use the SDK to call other contracts. The most idiomatic way to do this is to use `#[use_contract(address)]` attribute macro.
+
+```rust
+#[use_contract(...)]
+trait PrincessTheCat {
+    pub fn scratch(post: ScratchingPost) -> Dust;
+}
+```
+
+Is callable like so:
+
+```rust
+if let Some(dust) = princess_the_cat::scratch(post) {
+    // Omitted: clean up the dust.
+}
+```
 
 ## Accessing information about the Blockchain
 
 Contract Methods can be written to not only depend on call arguments and the contract's storage, but also on information about the Blockchain, e.g., the previous block hash, or the identity of the External Account that originated the Transaction with Call Command. 
 
 Functions for getting information about the Transaction that triggered a Contract call and information about the larger Blockchain in general are defined in `pchain_sdk::transaction` and `pchain_sdk::blockchain` respectively. Internally, these functions are thin wrappers around functions defined in the Imports Set of the CBI.
-
-## Calling other Contracts
-
-The SDK includes a pair of functions to make Contract-To-Contract internal calls:
-- `call` and `call_untyped`
-
-It does the obvious: to call a method in a specified Contract with the given arguments.
 
 ## Transferring balance
 
