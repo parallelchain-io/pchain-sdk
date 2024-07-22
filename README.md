@@ -1,107 +1,148 @@
 # ParallelChain Mainnet Contract SDK
 
-The ParallelChain Mainnet Contract SDK (pchain-sdk) provides Rust structs, functions, types, and macros that aid with the development of smart contracts executable in WebAssembly (WASM) engines implementing the ParallelChain Mainnet Contract Binary Interface (CBI) Subprotocol.  
+The ParallelChain Mainnet Contract SDK (`pchain-sdk`) provides Rust structs, functions, types, and macros that aid with the development of smart contracts executable in WebAssembly (WASM) engines implementing the ParallelChain Mainnet Contract Binary Interface (CBI) Subprotocol.  
 
 Contracts are the run-time programmability mechanism of ParallelChain Mainnet networks. They allow users (Account owners) to implement arbitrary logic in a global, decentralized, and Byzantine Fault Tolerant replicated state machine to support their most business-critical applications. 
 
-Theoretically, any WebAssembly (WASM) module that implements the CBI Subprotocol can be deployed onto a ParallelChain Mainnet blockchain. Practically, however, all developers (except perhaps those who like to experiment, or that would like to stretch the limits of the system) will want to use the types and macros in this `pchain-sdk` to write a Contract in Rust, and the commands in `pchain-compile` to compile the Rust source code into WASM bytecode that can be included in a Deploy Transaction. 
+Theoretically, any WebAssembly (WASM) module that implements the CBI Subprotocol can be deployed onto a ParallelChain Mainnet blockchain. Practically, however, all developers (except perhaps those who like to experiment, or that would like to stretch the limits of the system) will want to use the types and macros in this `pchain-sdk` to write a Contract in Rust, and the commands in `pchain-compile` to compile the Rust source code into WASM bytecode that can be included in a Deploy command. 
 
 ## The Contract Programming Model
 
-pchain-sdk enables developers to write Smart Contracts in an intuitive and readable style we call "The Contract Programming Model". The SDK's macros transparently generate lower-level 'boilerplate' code for you, so that you can focus on writing the business logic of your application.
+`pchain-sdk` enables developers to write Smart Contracts in an intuitive and readable style we call "The Contract Programming Model". The SDK's macros transparently generate lower-level 'boilerplate' code for you, so that you can focus on writing the business logic of your application.
 
-The Contract Programming Model is inspired by Object-Oriented Programming (OOP). In the Model, a Contract can be thought of as a Rust struct that controls access to persistent Storage. Accounts interact with Contracts by submitting Transaction with Call Command to invoke methods of a contract, or just Methods for short. The following two sections elaborate on the two essential concepts of programming with the Contract Programming Model: Contract Methods, and Contract Storage.
+The Contract Programming Model is inspired by Object-Oriented Programming (OOP). In the Model, a Contract can be thought of as a Rust struct that controls access to persistent Storage. Accounts interact with Contracts by submitting Transactions with Call commands to invoke Methods of contracts. 
+
+## Contract struct
+
+The `#[contract]` attribute macro turns any Rust struct into a Contract struct, as long as all of the struct's fields implement the `Storable` trait.
+
+```rust
+#[contract]
+struct PrinceTheDog {
+    age: u8,
+    breed: String,
+    hungry: bool,
+    toy: DogToy
+}
+```
+
+Out of the box, types that implement `Storable` includes all Rust primitive types, as well as as other commonly used types like `Option<T>`, `Result<T>`, `Vec<T>`, etc. In addition, structs defined by the developer can be made to implement Storage by applying the `#[contract_field]` macro on their definitions, as long as all of *their* fields implement Storable. For example:
+
+```rust
+#[contract_field]
+struct DogToy {
+    fun_score: u8,
+}
+```
+
+Fields are the basic persistence mechanism of a contract. The SDK transparently generates code that loads all fields from the contract account's storage trie before the execution of contract methods, *and* saves all fields into the contract account's storage trie after execution finishes.
 
 ## Contract Methods
 
-The Model defines methods with macro `#[call]` as Contract Methods, each corresponding to a method that is callable to a Call Command in the CBI Subprotocol.
-
-In order to produce to appropriate CBI Exports Set bindings that ultimately allow Methods to be called from the outside world, you must write Method definitions inside an `impl Contract` statement marked with the `#[contract_methods]` macro, as illustrated in the following examples.
+Marking an impl block for a contract struct with the `#[contract_methods]` attribute macro allows us to define contract methods in the impl block. Not every function defined in the impl block will become a contract method, rather, only those marked with the `#[call]` attribute macro will be. Functions not marked with `call` can still be used internally, they just won't be directly callable from a Call command or through the `view` RPC.
 
 ```rust
 #[contract_methods]
 impl PrinceTheDog {
     #[call]
-    fn eat_food(&mut self, food: DogFood) {
-        ...
+    pub fn eat_food(&mut self, food: DogFood) -> Bark {
+        /* method body omitted */
     }
 }
 ```
 
-Methods may mutate Contract Storage. Note however, that (as specified in the Transaction Subprotocol) mutations to Contract Storage made in a Call Transaction only get applied if the Transaction is Successful (e.g., the Transaction must exit with sufficient gas, must have not panicked during execution, etc.).
+### Accepting parameters and returning values
 
-A function can be called if and only if:
-1. The macro `#[call]` is added above the function declaration.
-2. Its (zero or more) other arguments implement `BorshDeserialize`.
-3. Its return value implements `BorshSerialize`, or it does not have a return value.
+Contract methods can accept parameters (included in a Call command in the `arguments` field) and return values (included in a command receipt in the `return_value` field). For example, the `eat_food` method in the above example accepts a single parameter (of type `DogFood`) and returns a single value (of type `Bark`). 
 
-## Accepting parameters and returning values
+Minimally, in order for a method's function signature to be valid, all arguments must implement `BorshDeserialize`, and all return values must implement `BorshSerialize`. 
 
-Some of the code snippets provided as examples in this document depict Contract Methods that take in function arguments (besides a borrow of the Contract struct) and/or return a value. In order for a Contract to receive arguments from and return values to the 'outside world' (callers), both Contract and caller need to agree on a serialization format.
+In practice, however, arguments should also implement `BorshSerialize`, and return values should also implement `BorshDeserialize`, because respectively:
+- The `arguments` field of the Call command has type `Option<Vec<Vec<u8>>>`, so each non-self method argument has to be borsh-serialized into `Vec<u8>` in order to be placed in a Call command.
+- The `return_value` field of a command receipt has type `Vec<u8>`, so code consuming the return value must be able deserialize the bytes vector into the specific return value type in order to do anything really useful on it.
 
-`pchain-sdk` expects callers to serialize Method arguments using the [borsh](https://github.com/near/borsh) serialization standard, and generates code to serialize values into borsh for inclusion in a Transaction's Receipt. To be precise, Transaction Command Call specify the Contract Method to call and provide the arguments for the call by including a borsh-serialized data structure `Option<Vec<Vec<u8>>>` in its `arguments` field, and contracts include a borsh-serialized `ContractMethodOutput` struct. The former type is defined in `pchain-types`, while the latter is defined in `pchain-sdk`. In the future, we plan to move both into the SDK. 
+### Method receivers
 
-## Contract Storage
+A contract method may have a `&self` receiver, a `&mut self` receiver, or no receiver at all. It cannot have a `self` receiver. The body of the contract method can use the fields of the contract just like a regular Rust function with the same kind of receiver. This means that one can only mutate the contract's fields through the receiver if the receiver is `&mut self`.
 
-Contracts can use Storage to persist data between calls. The simplest way to read and write data into Storage is to add fields to the Contract struct:
-```rust
-#[contract]
-struct PrinceTheDog {
-    age: u8, 
-    breed: String,
-    hungry: bool,
-    toy: DogToy,
-}
-```
+Note that having a `&self` receiver or no receiver at all only prevents mutations from being done from the receiver, it doesn't prevent mutations from being done generally. So for example, a method with a `&self` receiver could still mutate the world state by calling `pchain_sdk::storage::set`.
 
-The `#[contract]` macro transparently generates code that loads all Contract struct's fields from Storage before the execution of contract methods. All types that implement the `Storage` trait can be used as a Contract field. Out of the box, this includes all Rust primitive types, as well as other commonly used types like `Option<T>`, `Result<T>`, `Vec<T>`, etc. In addition, structs defined by the developer can be made to implement `Storage` by applying the `#[contract_field]` macro on their definitions, if all *their* fields implement Storage:
-```rust
-#[contract_field]
-struct DogToy {
-    ...
-}
-```
+## More about Contract Storage
 
-### Storage and Collections
+### Cacher
 
-Because Storage is so gas-expensive, loading all Contract's fields before Method execution and writing them all into Storage after execution typically results in Contracts that are not very economical. For Contracts that do not keep much in Storage, or whose Methods *always* read and write into most fields, this may be okay, or even ideal, however, some applications cannot avoid keeping a lot of on-chain state, and for these applications eagerly loading and saving fields in every call may be unacceptably expensive.
+As explained previously, by default, the SDK loads *all* of a contract's fields from storage before executing a method, and saves all of them into storage after the execution completes.
 
-To solve this, the SDK includes a `pchain_sdk::collections` module. All of the types defined in this module 'lazily' load Storage: they only incur a read or write gas cost when the exact item in the collection is read from or written to. They also offer an API that can make working with large collections of data more convenient.
+This default could be ideal for contracts that do not keep much in storage, or whose methods *always* read and write into every field in every call, but will in general result in contract calls that are not very gas-efficient.
 
 ```rust
 #[contract]
 struct PrinceTheDog {
-    nicknames: Vector<String>
+    // `Cacher` can wrap around any type that implements `Storable`.
+    age: Cacher<u8>,
+    breed: Cacher<String>,
+    hungry: Cacher<bool>,
+    toy: Cacher<DogToy> 
 }
 ```
 
-#### <u>Cacher (`Cacher<T>`)</u>
+Wrapping a contract field with the `Cacher<T>` struct (`pchain_sdk::storage::Cacher`) overrides this default behavior. Fields wrapped inside a `Cacher` are instead loaded "lazily", i.e., only if the specific call accesses them. In addition, `Cacher<T>` implements `Deref<Target=T>`, and so can be used in much of the same way as `T` with little extra syntax.
 
-Wraps over any non-collections type that implements `Storage` and makes them lazy (all `collections` types are already lazy without Cacher). Cacher implements `Deref`, so `Cacher<T>` can be used *almost* everywhere `T` can be used without any special syntax. 
+### Collections
 
-#### <u>Vector (`Vector<T>`)</u>
+Some fields will contain types (e.g., list types) that are comprised of a large "collection" of parts. Accesses to such collection fields will be inefficient even if they are wrapped inside `Cacher`, because `Cacher` loads *entire* fields. Efficient access of collections, therefore, require types that enable lazy loading of *parts* of fields, not only entire fields like `Cacher`.
 
-Lazily stores a list of items in `Storage`. Vector implements `Index`, `IndexMut`, and has an `iter` method, so most of the things you can do with `std::vec::Vec`, you can probably do with `Vector` too.
+The `collections` module (`pchain_sdk::collections`) provide exactly these kinds of types.  
 
-#### <u>Maps (`FastMap<K, V>` and `IterableMap<K, V>`)</u>
+#### Lazy lists: `Vector<T>`
 
-Collections include two types that store statically typed mapping between keys and values. The difference between these two types is that IterableMap is, as its name suggests, iterable. i.e., it has the standard library's HashMap's `keys`, `iter`, and `values` sets of methods. This functionality comes at the cost of storing slightly more data in Storage than FastMap. Both types function identically otherwise, down to being able to nest like-Maps together (e.g., `FastMap<T, FastMap<K, V>>`, but *not* `FastMap<T, IterableMap<K, V>>`).
+Vector (`Vector<T>`) lazily stores a list of items in storage. Vector implements `Index`, `IndexMut`, and has an `iter` method, so most of the things you can do with `std::vec::Vec`, you can probably do with `Vector` too.
 
-You should use IterableMap if your application absolutely needs to iterate through stored items, otherwise, use FastMap.
+#### Lazy maps: `FastMap<K, V>` and `IterableMap<K, V>`
+
+Collections come with two types that store statically typed mappings between keys and values. The difference between these two types is that `IterableMap` is, as its name suggests, iterable. i.e., it has the standard library's HashMap's `keys`, `iter`, and `values` sets of methods. This functionality comes at the cost of storing slightly more data in Storage than `FastMap`. 
+
+Like-typed maps can be nested together, but unlike-maps cannot, so for example `FastMap<T, FastMap<K, V>>` is permissible, but `FastMap<T, IterableMap<K, V>>` or `IterableMap<T, FastMap<K, V>>` are not. 
+
+You should use `IterableMap` if your application needs to iterate through stored items, otherwise, use `FastMap`.
+
+## Internal commands
+
+### Cross-contract calls
+
+Contracts can use the SDK to call other contracts. The most idiomatic way to do this is by specifying the interface of the target contract using a trait definition and applying the `#[use_contract(target_address)]` macro on it, like below:
+
+```rust
+// The target address: "Fx35..." has to be Base64URL encoded.
+#[use_contract("Fx35F_igvP8751igmTycIrgfFoE999013MTH8rJp6x4")]
+trait PrincessTheCat {
+    pub fn scratch(post: ScratchingPost) -> Sawdust;
+}
+```
+
+In specifying the interface of the target contract using a trait definition, note the following two restrictions:
+1. Every function must appear without the receiver (`&self`/`&mut self`/`self`). I.e., if the function signature in the target contract takes in a receiver, the corresponding function in the trait definition must omit it.
+2. All arguments and the return type must implement both `BorshSerialize` and `BorshDeserialize`.
+
+`use_contract` then does the following to the trait definition:
+1. The trait will be transformed into a module with the same name but in snake_case, (i.e., `PrincessTheCat` -> `princess_the_cat`). Trait functions then become functions defined under the module (i.e., `PrincessTheCat::scratch` -> `princess_the_cat::scratch`).
+2. The return type of all methods will be wrapped in an Option (i.e., `Sawdust` -> `Option<Sawdust>`).
+3. All methods will get an additional `amount: u64` argument appended to the end of their arguments lists. Callers can use this to specify the amount of tokens that should be transferred to the target contract account before the contract call.
+
+In totality, the above restrictions and rules make it so that you can make a cross-contract call to `scratch` like so:
+
+```rust
+if let Some(sawdust) = princess_the_cat::scratch(post, 0) {
+    // Omitted: clean up the sawdust.
+}
+```
+
+### Transfers
+
+One can also transfer a specific amount of tokens into any kind of account (external or contract) without making a cross-contract call using the `internal::transfer` function.
 
 ## Accessing information about the Blockchain
 
 Contract Methods can be written to not only depend on call arguments and the contract's storage, but also on information about the Blockchain, e.g., the previous block hash, or the identity of the External Account that originated the Transaction with Call Command. 
 
 Functions for getting information about the Transaction that triggered a Contract call and information about the larger Blockchain in general are defined in `pchain_sdk::transaction` and `pchain_sdk::blockchain` respectively. Internally, these functions are thin wrappers around functions defined in the Imports Set of the CBI.
-
-## Calling other Contracts
-
-The SDK includes a pair of functions to make Contract-To-Contract internal calls:
-- `call` and `call_untyped`
-
-It does the obvious: to call a method in a specified Contract with the given arguments.
-
-## Transferring balance
-
-`pchain_sdk::transfer` transfers balance from the Contract Account to another Account and returns the balance of the recipient after the transfer.
