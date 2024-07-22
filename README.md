@@ -139,12 +139,10 @@ if let Some(sawdust) = princess_the_cat::scratch(post, 0) {
 
 ### Transfers
 
+One can also transfer a specific amount of tokens into any kind of account (external or contract) without making a cross-contract call using the `internal::transfer` function.
+
 ## Accessing information about the Blockchain
 
 Contract Methods can be written to not only depend on call arguments and the contract's storage, but also on information about the Blockchain, e.g., the previous block hash, or the identity of the External Account that originated the Transaction with Call Command. 
 
 Functions for getting information about the Transaction that triggered a Contract call and information about the larger Blockchain in general are defined in `pchain_sdk::transaction` and `pchain_sdk::blockchain` respectively. Internally, these functions are thin wrappers around functions defined in the Imports Set of the CBI.
-
-## Transferring balance
-
-`pchain_sdk::transfer` transfers balance from the Contract Account to another Account and returns the balance of the recipient after the transfer.
