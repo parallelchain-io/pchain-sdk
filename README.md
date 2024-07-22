@@ -108,28 +108,36 @@ You should use `IterableMap` if your application needs to iterate through stored
 
 ## Internal commands
 
-### Transfers
-
-
-
 ### Cross-contract calls
 
-Contracts can use the SDK to call other contracts. The most idiomatic way to do this is to use `#[use_contract(address)]` attribute macro.
+Contracts can use the SDK to call other contracts. The most idiomatic way to do this is by specifying the interface of the target contract using a trait definition and applying the `#[use_contract(target_address)]` macro on it, like below:
 
 ```rust
-#[use_contract(...)]
+// The target address: "Fx35..." has to be Base64URL encoded.
+#[use_contract("Fx35F_igvP8751igmTycIrgfFoE999013MTH8rJp6x4")]
 trait PrincessTheCat {
-    pub fn scratch(post: ScratchingPost) -> Dust;
+    pub fn scratch(post: ScratchingPost) -> Sawdust;
 }
 ```
 
-Is callable like so:
+In specifying the interface of the target contract using a trait definition, note the following two restrictions:
+1. Every function must appear without the receiver (`&self`/`&mut self`/`self`). I.e., if the function signature in the target contract takes in a receiver, the corresponding function in the trait definition must omit it.
+2. All arguments and the return type must implement both `BorshSerialize` and `BorshDeserialize`.
+
+`use_contract` then does the following to the trait definition:
+1. The trait will be transformed into a module with the same name but in snake_case, (i.e., `PrincessTheCat` -> `princess_the_cat`). Trait functions then become functions defined under the module (i.e., `PrincessTheCat::scratch` -> `princess_the_cat::scratch`).
+2. The return type of all methods will be wrapped in an Option (i.e., `Sawdust` -> `Option<Sawdust>`).
+3. All methods will get an additional `amount: u64` argument appended to the end of their arguments lists. Callers can use this to specify the amount of tokens that should be transferred to the target contract account before the contract call.
+
+In totality, the above restrictions and rules make it so that you can make a cross-contract call to `scratch` like so:
 
 ```rust
-if let Some(dust) = princess_the_cat::scratch(post) {
-    // Omitted: clean up the dust.
+if let Some(sawdust) = princess_the_cat::scratch(post, 0) {
+    // Omitted: clean up the sawdust.
 }
 ```
+
+### Transfers
 
 ## Accessing information about the Blockchain
 
